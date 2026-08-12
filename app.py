@@ -424,27 +424,22 @@ for i, d in enumerate(f_dates):
         arr = 0
 
     if ds < today_str:
+        # 过去月份：使用实际销量
         demand_to_use = actual_total
         cumulative_plan += plan_total
         cumulative_actual += actual_total
     elif ds == today_str:
+        # 当前月份：如果有实际销量用实际，否则用计划
         if actual_total > 0:
             demand_to_use = actual_total
-            cumulative_plan += plan_total
-            cumulative_actual += actual_total
         else:
             shortfall = max(0, cumulative_plan - cumulative_actual)
             demand_to_use = plan_total + shortfall
-            cumulative_plan = 0
-            cumulative_actual = 0
+        cumulative_plan = 0
+        cumulative_actual = 0
     else:
-        if cumulative_plan > 0 or cumulative_actual > 0:
-            shortfall = max(0, cumulative_plan - cumulative_actual)
-            demand_to_use = plan_total + shortfall
-            cumulative_plan = 0
-            cumulative_actual = 0
-        else:
-            demand_to_use = plan_total
+        # 未来月份：直接使用计划预测，不追补过去的缺口
+        demand_to_use = plan_total
 
     curr_inv = curr_inv + arr - demand_to_use
 
