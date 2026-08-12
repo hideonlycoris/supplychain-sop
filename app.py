@@ -228,7 +228,13 @@ if 'full_db' not in st.session_state:
     st.session_state['full_db'] = load_all_sku_data()
 full_db = st.session_state['full_db']
 
-available_skus = sorted(list(full_db.keys())) if full_db else ["请先上传或创建SKU"]
+def _sort_key(sku_name):
+    """按产品简称排序（取'-'后面的部分）"""
+    if '-' in sku_name:
+        return sku_name.split('-', 1)[1]
+    return sku_name
+
+available_skus = sorted(list(full_db.keys()), key=_sort_key) if full_db else ["请先上传或创建SKU"]
 target_sku = st.sidebar.selectbox("🎯 选择 SKU", available_skus)
 sku_key = str(target_sku)
 
