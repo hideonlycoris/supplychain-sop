@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+
+# Streamlit secrets（部署时通过 Cloud UI 配置）
+# .streamlit/secrets.toml  # 本地开发时保留，部署时不要提交
+
+# 旧版数据文件（已迁移到 Supabase）
+sop_v11_db.json
+sop_v6_pro_db.json
+sop_v9_db.json
+master_data_v11.csv
+operation_log.csv
+ai_memory.txt
+db_backups/
+ai_reports/
+ai_tasks/
+
+# 冗余文件
+新建文件夹/
+supply_chain_analysis项目/
+*.zip
+*.png
+*.jpg
+*.heapsnapshot
+
+# IDE
+.vscode/
+.idea/
