@@ -30,39 +30,100 @@ def get_risk_label(risk_level: str) -> str:
 
 
 def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
-    """计算单个SKU的关键指标"""
+    """
+    计算单个SKU的关键指标 - 使用与app.py相同的模拟逻辑
+    """
+    import pandas as pd
+    from datetime import datetime, timedelta
+
     config = sku_data.get("config", {})
     dept_plans = sku_data.get("dept_plans", {})
     shipments = sku_data.get("shipments", {})
     actual_sales = sku_data.get("actual_sales", {})
 
-    # 获取当前月份
-    today = datetime.now()
-    current_month = today.strftime('%Y-%m')
-
-    # 计算当前库存（简化版：期初 + 累计到货 - 累计销量）
+    # 关键参数
     init_inv = config.get("init_inv", 0)
     target_doh = config.get("target_doh", 30)
+    lt_months = config.get("lt", 2)
 
-    # 计算累计发货和销量
-    total_shipments = sum(shipments.values())
-    total_plans = sum(dept_plans.get(m, {}).get(d, 0)
-                      for m in dept_plans
-                      for d in dept_plans[m])
-    total_actual = sum(actual_sales.get(m, {}).get(d, 0)
-                       for m in actual_sales
-                       for d in actual_sales[m])
+    # 当前月份
+    today = datetime.now()
+    today_str = today.strftime('%Y-%m')
 
-    # 当前库存（简化计算）
-    current_inv = init_inv + total_shipments - total_plans
+    # 模拟计算（与app.py相同的逻辑）
+    start_date = datetime(today.year, 1, 1)
+    f_dates = pd.date_range(start=start_date, periods=12, freq='MS')
 
-    # 计算DOH（简化版）
-    next_month = (today + timedelta(days=32)).strftime('%Y-%m')
-    next_month_plan = sum(dept_plans.get(next_month, {}).values())
-    if next_month_plan > 0:
-        doh = round(current_inv / (next_month_plan / 30), 1)
+    sim_res = []
+    curr_inv = float(init_inv)
+    cumulative_plan = 0
+    cumulative_actual = 0
+
+    for i, d in enumerate(f_dates):
+        ds = d.strftime('%Y-%m')
+        actual_total = sum(actual_sales.get(ds, {}).values())
+        plan_total = sum(dept_plans.get(ds, {}).values())
+
+        if i >= lt_months:
+            ship_month = f_dates[i - lt_months].strftime('%Y-%m')
+            arr = shipments.get(ship_month, 0)
+        else:
+            arr = 0
+
+        if ds < today_str:
+            # 过去月份：使用实际销量
+            demand_to_use = actual_total
+            cumulative_plan += plan_total
+            cumulative_actual += actual_total
+        elif ds == today_str:
+            # 当前月份：如果有实际销量用实际，否则用计划
+            if actual_total > 0:
+                demand_to_use = actual_total
+            else:
+                shortfall = max(0, cumulative_plan - cumulative_actual)
+                demand_to_use = plan_total + shortfall
+            cumulative_plan = 0
+            cumulative_actual = 0
+        else:
+            # 未来月份：直接使用计划预测
+            demand_to_use = plan_total
+
+        curr_inv = curr_inv + arr - demand_to_use
+
+        in_transit = sum([
+            shipments.get(f_dates[i - j].strftime('%Y-%m'), 0)
+            for j in range(lt_months) if i - j >= 0
+        ])
+
+        next_dem = sum(dept_plans.get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).values())
+        if next_dem > 0:
+            effective_inv = max(0, curr_inv)
+            doh = round(effective_inv / (next_dem / 30), 1)
+        else:
+            doh = 999.0 if curr_inv > 0 else 0.0
+
+        sim_res.append({
+            "月份": ds,
+            "期末在仓": int(curr_inv),
+            "期末在途": int(in_transit),
+            "全口径库存": int(curr_inv + in_transit),
+            "DOH": doh
+        })
+
+        curr_inv = max(0, curr_inv)
+
+    # 获取当前月份的模拟结果
+    current_month_idx = today.month - 1
+    if current_month_idx < len(sim_res):
+        current_sim = sim_res[current_month_idx]
+        current_inv = current_sim["期末在仓"]
+        doh = current_sim["DOH"]
     else:
-        doh = 999.0 if current_inv > 0 else 0.0
+        current_inv = init_inv
+        doh = 0.0
+
+    # 计算在途库存
+    in_transit = current_sim.get("期末在途", 0) if current_month_idx < len(sim_res) else 0
 
     # 判断风险等级
     if current_inv < 0:
@@ -79,14 +140,13 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
     return {
         'sku_name': sku_name,
         'current_inv': current_inv,
+        'in_transit': in_transit,
+        'total_inventory': current_inv + in_transit,
         'target_doh': target_doh,
         'doh': doh,
         'risk_level': risk_level,
-        'total_shipments': total_shipments,
-        'total_plans': total_plans,
-        'total_actual': total_actual,
         'price': config.get('price', 0),
-        'inventory_value': current_inv * config.get('price', 0)
+        'inventory_value': (current_inv + in_transit) * config.get('price', 0)
     }
 
 
@@ -271,6 +331,8 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         overview_data.append({
             'sku_name': sku_name,
             'current_inv': metrics['current_inv'],
+            'in_transit': metrics['in_transit'],
+            'total_inventory': metrics['total_inventory'],
             'target_doh': metrics['target_doh'],
             'doh': metrics['doh'],
             'risk_level': final_risk,
@@ -334,7 +396,11 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                         </div>
                         <div style="margin-top: 10px;">
                             <div style="display: flex; justify-content: space-between; font-size: 13px; color: #666;">
-                                <span>库存: <b>{row['current_inv']:,.0f}</b></span>
+                                <span>在仓: <b>{row['current_inv']:,.0f}</b></span>
+                                <span>在途: <b>{row['in_transit']:,.0f}</b></span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 13px; color: #666; margin-top: 5px;">
+                                <span>全口径: <b>{row['total_inventory']:,.0f}</b></span>
                                 <span>DOH: <b>{row['doh']:.1f}</b></span>
                             </div>
                             <div style="font-size: 12px; color: #999; margin-top: 5px;">
@@ -359,7 +425,9 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         for _, row in risk_items.iterrows():
             risk_label = get_risk_label(row['risk_level'])
             with st.expander(f"{risk_label} {row['sku_name']} - {row['risk_summary'][:50]}..." if row['risk_summary'] else f"{risk_label} {row['sku_name']}"):
-                st.write(f"**当前库存:** {row['current_inv']:,.0f} PCS")
+                st.write(f"**在仓库存:** {row['current_inv']:,.0f} PCS")
+                st.write(f"**在途库存:** {row['in_transit']:,.0f} PCS")
+                st.write(f"**全口径库存:** {row['total_inventory']:,.0f} PCS")
                 st.write(f"**DOH:** {row['doh']:.1f} 天 (目标: {row['target_doh']} 天)")
                 if row['risk_summary']:
                     st.write(f"**诊断摘要:** {row['risk_summary']}")
