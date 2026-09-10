@@ -280,14 +280,17 @@ SKU: {sku_name}
 
 
 def load_diagnosis_cache(supabase_client) -> dict:
-    """从数据库加载诊断结果缓存"""
+    """从 ai_reports 表加载各SKU详情页的AI分析结果"""
     try:
-        result = supabase_client.table("sku_reports").select("*").execute()
+        result = supabase_client.table("ai_reports").select("*").execute()
         cache = {}
         for row in result.data:
-            cache[row['sku_name']] = {
-                'risk_level': row.get('risk_level', ''),
-                'risk_summary': row.get('content', '')[:200] if row.get('content') else '',
+            sku_name = row.get('sku_name', '')
+            content = row.get('content', '')
+            # 截取前200字作为摘要
+            summary = content[:200] + '...' if len(content) > 200 else content
+            cache[sku_name] = {
+                'risk_summary': summary,
                 'updated_at': row.get('updated_at', '')
             }
         return cache
@@ -382,23 +385,20 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     """, unsafe_allow_html=True)
 
     # 操作栏
-    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+    col1, col2, col3 = st.columns([3, 2, 1])
     with col1:
         st.info(f"👤 **{current_user}** | {'管理员' if is_admin else '部门用户'}")
     with col2:
-        if st.button("🔍 一键诊断所有SKU", type="primary", use_container_width=True):
-            run_batch_diagnosis(full_db, supabase_client, api_key, current_user)
-    with col3:
         if st.button("🔄 刷新数据", use_container_width=True):
             st.rerun()
-    with col4:
+    with col3:
         if st.button("➕ 新建SKU", use_container_width=True):
             st.session_state.page = 'sku_detail'
             st.rerun()
 
     st.markdown("---")
 
-    # 加载诊断结果
+    # 加载各SKU详情页的AI分析结果
     diagnosis_cache = load_diagnosis_cache(supabase_client)
 
     # 构建总表数据
@@ -406,17 +406,10 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     for sku_name, sku_data in full_db.items():
         metrics = calculate_sku_metrics(sku_name, sku_data)
 
-        # 获取诊断结果
+        # 获取该SKU的AI分析摘要
         diagnosis = diagnosis_cache.get(sku_name, {})
-        last_diagnosis_time = diagnosis.get('updated_at', '')
-        risk_from_ai = diagnosis.get('risk_level', '')
         risk_summary = diagnosis.get('risk_summary', '')
-
-        # 只有当AI诊断结果是有效的风险等级时才使用，否则使用计算的风险
-        if risk_from_ai in ['high', 'medium', 'low']:
-            final_risk = risk_from_ai
-        else:
-            final_risk = metrics['risk_level']
+        last_diagnosis_time = diagnosis.get('updated_at', '')
 
         overview_data.append({
             'sku_name': sku_name,
@@ -425,10 +418,10 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
             'total_inventory': metrics['total_inventory'],
             'target_doh': metrics['target_doh'],
             'doh': metrics['doh'],
-            'risk_level': final_risk,
+            'risk_level': metrics['risk_level'],  # 使用计算的风险等级
             'risk_reason': metrics['risk_reason'],
             'risk_suggestion': metrics['risk_suggestion'],
-            'risk_summary': risk_summary,
+            'risk_summary': risk_summary,  # 显示详情页的AI分析摘要
             'last_diagnosis': last_diagnosis_time,
             'inventory_value': metrics['inventory_value']
         })
@@ -553,6 +546,7 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                             <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 6px; border: 1px solid #e9ecef;">
                                 <div style="font-size: 13px; color: #495057; margin-bottom: 6px;">{row['risk_reason']}</div>
                                 <div style="font-size: 14px; color: #c0392b; font-weight: 600;">{row['risk_suggestion']}</div>
+                                {'<div style="font-size: 12px; color: #6c757d; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dee2e6;"><b>📋 AI分析:</b> ' + row['risk_summary'] + '</div>' if row['risk_summary'] else ''}
                             </div>
                         </div>
                     </div>
