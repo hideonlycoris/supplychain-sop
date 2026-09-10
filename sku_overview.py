@@ -3,6 +3,7 @@ SKU 仪表板模块 - 独立首页，显示所有SKU的摘要信息和AI诊断�
 """
 import streamlit as st
 import pandas as pd
+import json
 from datetime import datetime, timedelta
 import google.generativeai as genai
 
@@ -150,6 +151,22 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
     }
 
 
+def update_sku_target_doh(supabase_client, full_db: dict, sku_name: str, new_target_doh: int):
+    """更新SKU的目标DOH"""
+    if sku_name in full_db:
+        # 更新内存中的数据
+        full_db[sku_name]['config']['target_doh'] = new_target_doh
+
+        # 保存到数据库
+        try:
+            supabase_client.table("sku_data").update({
+                "data": json.dumps(full_db[sku_name], ensure_ascii=False),
+                "updated_at": datetime.now().isoformat()
+            }).eq("sku_name", sku_name).execute()
+        except Exception as e:
+            st.error(f"保存失败: {e}")
+
+
 def run_ai_diagnosis(sku_name: str, sku_data: dict, api_key: str, model_name: str = "gemini-3-flash-preview") -> dict:
     """对单个SKU运行AI诊断"""
     try:
@@ -263,6 +280,10 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
 
 def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user: str, is_admin: bool):
     """渲染独立的仪表板首页"""
+    # 初始化session_state
+    if 'show_batch_edit' not in st.session_state:
+        st.session_state.show_batch_edit = False
+
     # 页面标题
     st.markdown("""
     <style>
@@ -371,6 +392,61 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     # SKU 风险卡片网格
     st.markdown("### 🎯 SKU 风险总览")
 
+    # 批量设置按钮
+    col_header1, col_header2 = st.columns([3, 1])
+    with col_header2:
+        if st.button("⚙️ 批量设置目标DOH", use_container_width=True):
+            st.session_state.show_batch_edit = True
+
+    # 批量设置弹窗
+    if st.session_state.get('show_batch_edit', False):
+        with st.expander("⚙️ 批量设置目标DOH", expanded=True):
+            st.info("修改后点击保存，所有变更将立即生效。")
+
+            # 构建编辑表格
+            edit_data = []
+            for _, row in df.iterrows():
+                edit_data.append({
+                    'sku_name': row['sku_name'],
+                    '当前目标DOH': row['target_doh'],
+                    '新目标DOH': row['target_doh']
+                })
+
+            edit_df = pd.DataFrame(edit_data)
+
+            # 使用data_editor编辑
+            edited_df = st.data_editor(
+                edit_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "sku_name": st.column_config.TextColumn("SKU名称", disabled=True),
+                    "当前目标DOH": st.column_config.NumberColumn("当前目标DOH", disabled=True),
+                    "新目标DOH": st.column_config.NumberColumn("新目标DOH", min_value=1, max_value=365)
+                },
+                key="batch_target_doh_editor"
+            )
+
+            col_save, col_cancel = st.columns(2)
+            with col_save:
+                if st.button("💾 保存所有修改", type="primary", use_container_width=True):
+                    # 获取编辑器中的修改
+                    if 'batch_target_doh_editor' in st.session_state:
+                        edited_rows = st.session_state['batch_target_doh_editor'].get('edited_rows', {})
+                        for row_idx, changes in edited_rows.items():
+                            if '新目标DOH' in changes:
+                                sku_name = edit_df.iloc[int(row_idx)]['sku_name']
+                                new_target_doh = int(changes['新目标DOH'])
+                                update_sku_target_doh(supabase_client, full_db, sku_name, new_target_doh)
+                    st.session_state.show_batch_edit = False
+                    st.success("✅ 批量设置已保存！")
+                    st.rerun()
+
+            with col_cancel:
+                if st.button("❌ 取消", use_container_width=True):
+                    st.session_state.show_batch_edit = False
+                    st.rerun()
+
     # 按风险等级排序（高风险优先）
     risk_order = {'high': 0, 'medium': 1, 'low': 2, 'normal': 3}
     df['risk_sort'] = df['risk_level'].map(risk_order)
@@ -403,12 +479,34 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                                 <span>全口径: <b>{row['total_inventory']:,.0f}</b></span>
                                 <span>DOH: <b>{row['doh']:.1f}</b></span>
                             </div>
-                            <div style="font-size: 12px; color: #999; margin-top: 5px;">
-                                目标DOH: {row['target_doh']} | 库存值: ${row['inventory_value']:,.0f}
-                            </div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
+
+                    # 目标DOH编辑区
+                    target_doh_key = f"target_doh_{row['sku_name']}"
+                    if target_doh_key not in st.session_state:
+                        st.session_state[target_doh_key] = row['target_doh']
+
+                    target_doh_col1, target_doh_col2 = st.columns([3, 1])
+                    with target_doh_col1:
+                        new_target_doh = st.number_input(
+                            "目标DOH",
+                            value=int(row['target_doh']),
+                            min_value=1,
+                            max_value=365,
+                            key=f"input_{target_doh_key}",
+                            label_visibility="collapsed"
+                        )
+                    with target_doh_col2:
+                        if st.button("✏️", key=f"edit_{target_doh_key}", help="保存修改"):
+                            if new_target_doh != int(row['target_doh']):
+                                update_sku_target_doh(supabase_client, full_db, row['sku_name'], int(new_target_doh))
+                                st.success(f"✅ {row['sku_name']} 目标DOH已更新为 {new_target_doh}")
+                                st.rerun()
+
+                    # 库存值
+                    st.caption(f"库存值: ${row['inventory_value']:,.0f}")
 
                     # 详情按钮
                     if st.button("查看详情 →", key=f"goto_{row['sku_name']}", use_container_width=True):
