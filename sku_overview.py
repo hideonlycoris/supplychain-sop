@@ -231,6 +231,8 @@ SKU: {sku_name}
     "action_items": ["建议1", "建议2"]
 }}"""
 
+    print(f"[AI DEBUG] {sku_name} 开始调用API, api_key长度: {len(api_key) if api_key else 0}")
+
     try:
         # 使用MiMo v2.5 API (OpenAI兼容格式)
         response = requests.post(
@@ -251,17 +253,29 @@ SKU: {sku_name}
             timeout=60
         )
 
+        print(f"[AI DEBUG] {sku_name} API响应状态: {response.status_code}")
+
         if response.status_code != 200:
-            print(f"[AI DEBUG] {sku_name} API错误: {response.status_code} {response.text[:200]}")
+            print(f"[AI DEBUG] {sku_name} API错误: {response.text[:300]}")
             return {
                 'risk_level': 'medium',
-                'risk_summary': f'API错误: {response.status_code}',
+                'risk_summary': f'API错误: {response.status_code} - {response.text[:100]}',
                 'action_items': []
             }
 
         result_json = response.json()
+        print(f"[AI DEBUG] {sku_name} API返回: {str(result_json)[:300]}")
+
+        if 'choices' not in result_json or not result_json['choices']:
+            print(f"[AI DEBUG] {sku_name} API返回无choices字段")
+            return {
+                'risk_level': 'medium',
+                'risk_summary': 'API返回格式错误',
+                'action_items': []
+            }
+
         result = result_json['choices'][0]['message']['content']
-        print(f"[AI DEBUG] {sku_name} 原始返回: {result[:200]}")
+        print(f"[AI DEBUG] {sku_name} 原始返回: {result[:300]}")
 
         # 尝试解析JSON
         import json
@@ -327,7 +341,7 @@ def load_diagnosis_cache(supabase_client) -> dict:
 def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_user: str):
     """批量AI诊断所有SKU，保存到ai_reports表"""
     if not api_key:
-        st.error("❌ 未配置 Gemini API Key")
+        st.error("❌ 未配置 AI API Key (请在 Secrets 中添加 MIMO_API_KEY)")
         return
 
     progress_bar = st.progress(0)
