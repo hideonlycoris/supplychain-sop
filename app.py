@@ -728,15 +728,11 @@ with tab_ai:
 
     with col_ai_left:
         st.info(f"✅ 内置配置。当前分析 SKU: **{target_sku}**")
-        model_name = st.selectbox("选择模型", ["gemini-3-flash-preview", "gemini-3.1-pro-preview"])
+        model_name = st.selectbox("选择模型", ["mimo-v2.5", "gemini-3-flash-preview", "gemini-3.1-pro-preview"])
 
         if st.button("✨ 召唤专家诊断", type="primary"):
-            with st.spinner(f"🧠 Gemini 正在进行 {target_sku} 的深度推理..."):
+            with st.spinner(f"🧠 AI 正在进行 {target_sku} 的深度推理..."):
                 try:
-                    import google.generativeai as genai
-                    genai.configure(api_key=GEMINI_API_KEY)
-                    model = genai.GenerativeModel(model_name)
-
                     df_text = sim_df.to_csv(index=False)
                     current_date_str = datetime.now().strftime('%Y年%m月%d日')
                     system_prompt = (
@@ -749,16 +745,47 @@ with tab_ai:
                     user_prompt = (
                         f"分析 SKU: {target_sku} 的最新供需数据（CSV格式）：\n{df_text}\n"
                         f"注意：以上数据是截至 {current_date_str} 的最新模拟结果，请据此给出：\n"
-                        f"1.风险诊断 2.逻辑推理 3.可执行建议。重点在于当前时间节点下最紧迫的行动项。"
+                        f"1.风险诊断 2.逻辑推理 3.可执行建议。重点于当前时间节点下最紧迫的行动项。"
                     )
 
-                    response = model.generate_content([system_prompt, user_prompt])
+                    # 根据模型选择不同的API
+                    if model_name == "mimo-v2.5":
+                        import requests
+                        response = requests.post(
+                            "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {MIMO_API_KEY}",
+                                "Content-Type": "application/json"
+                            },
+                            json={
+                                "model": "mimo-v2.5",
+                                "messages": [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": user_prompt}
+                                ],
+                                "temperature": 0.7,
+                                "max_tokens": 2000
+                            },
+                            timeout=120
+                        )
+                        if response.status_code == 200:
+                            result_json = response.json()
+                            report_content = f"--- 分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n\n{result_json['choices'][0]['message']['content']}"
+                        else:
+                            st.error(f"❌ API错误: {response.status_code}")
+                            report_content = None
+                    else:
+                        # 使用Gemini
+                        import google.generativeai as genai
+                        genai.configure(api_key=GEMINI_API_KEY)
+                        model = genai.GenerativeModel(model_name)
+                        response = model.generate_content([system_prompt, user_prompt])
+                        report_content = f"--- 分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n\n{response.text}"
 
-                    report_content = f"--- 分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n\n{response.text}"
-                    save_report(target_sku, report_content)
-
-                    st.session_state['ai_chat_history'] = []
-                    st.rerun()
+                    if report_content:
+                        save_report(target_sku, report_content)
+                        st.session_state['ai_chat_history'] = []
+                        st.rerun()
                 except Exception as e:
                     logger.exception(f"AI 诊断调用失败: {e}")
                     st.error(f"❌ 调用失败: {e}")
