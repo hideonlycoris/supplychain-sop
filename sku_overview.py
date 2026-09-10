@@ -530,7 +530,7 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                             </div>
                             <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 6px; border: 1px solid #e9ecef;">
                                 <div style="font-size: 13px; color: #495057; margin-bottom: 6px;">{row['risk_reason']}</div>
-                                <div style="font-size: 14px; color: {risk_color}; font-weight: 600;">{row['risk_suggestion']}</div>
+                                <div style="font-size: 14px; color: #c0392b; font-weight: 600;">{row['risk_suggestion']}</div>
                             </div>
                         </div>
                     </div>
