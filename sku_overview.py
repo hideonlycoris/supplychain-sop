@@ -202,18 +202,16 @@ def update_sku_target_doh(supabase_client, full_db: dict, sku_name: str, new_tar
             st.error(f"保存失败: {e}")
 
 
-def run_ai_diagnosis(sku_name: str, sku_data: dict, api_key: str, model_name: str = "gemini-3-flash-preview") -> dict:
-    """对单个SKU运行AI诊断"""
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
+def run_ai_diagnosis(sku_name: str, sku_data: dict, api_key: str, model_name: str = "mimo-v2.5") -> dict:
+    """对单个SKU运行AI诊断 - 使用MiMo v2.5模型"""
+    import requests
 
-        # 构建数据摘要
-        config = sku_data.get("config", {})
-        dept_plans = sku_data.get("dept_plans", {})
-        shipments = sku_data.get("shipments", {})
+    # 构建数据摘要
+    config = sku_data.get("config", {})
+    dept_plans = sku_data.get("dept_plans", {})
+    shipments = sku_data.get("shipments", {})
 
-        data_summary = f"""
+    data_summary = f"""
 SKU: {sku_name}
 期初库存: {config.get('init_inv', 0)}
 目标DOH: {config.get('target_doh', 30)}
@@ -222,7 +220,7 @@ SKU: {sku_name}
 部门计划: {dept_plans}
 """
 
-        prompt = f"""你是供应链专家，请分析以下SKU数据并给出风险诊断。
+    prompt = f"""你是供应链专家，请分析以下SKU数据并给出风险诊断。
 
 {data_summary}
 
@@ -233,8 +231,36 @@ SKU: {sku_name}
     "action_items": ["建议1", "建议2"]
 }}"""
 
-        response = model.generate_content(prompt)
-        result = response.text
+    try:
+        # 使用MiMo v2.5 API (OpenAI兼容格式)
+        response = requests.post(
+            "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "你是供应链专家，擅长分析库存风险。"},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 500
+            },
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            print(f"[AI DEBUG] {sku_name} API错误: {response.status_code} {response.text[:200]}")
+            return {
+                'risk_level': 'medium',
+                'risk_summary': f'API错误: {response.status_code}',
+                'action_items': []
+            }
+
+        result_json = response.json()
+        result = result_json['choices'][0]['message']['content']
         print(f"[AI DEBUG] {sku_name} 原始返回: {result[:200]}")
 
         # 尝试解析JSON
@@ -266,7 +292,7 @@ SKU: {sku_name}
                 risk_level = 'medium'
             return {
                 'risk_level': risk_level,
-                'risk_summary': result[:150] if result else '诊断完成',
+                'risk_summary': result[:200] if result else '诊断完成',
                 'action_items': []
             }
 

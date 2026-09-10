@@ -27,6 +27,7 @@ st.markdown("""
 
 # Gemini API Key - 从 Streamlit Secrets 读取（不再硬编码）
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+MIMO_API_KEY = st.secrets.get("MIMO_API_KEY", "")
 
 DEPTS = ["一部", "四部", "五部", "珍组", "琪组", "tt"]
 
@@ -252,7 +253,7 @@ if st.sidebar.button("🏠 首页仪表板", use_container_width=True):
 # ============================================================
 if st.session_state.page == 'dashboard':
     from sku_overview import render_dashboard
-    render_dashboard(full_db, supabase, GEMINI_API_KEY, current_user, is_admin)
+    render_dashboard(full_db, supabase, MIMO_API_KEY, current_user, is_admin)
     st.stop()  # 停止后续渲染，避免显示SKU详情
 
 # ============================================================
