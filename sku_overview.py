@@ -299,7 +299,7 @@ def load_diagnosis_cache(supabase_client) -> dict:
 
 
 def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_user: str):
-    """批量AI诊断所有SKU"""
+    """批量AI诊断所有SKU，保存到ai_reports表"""
     if not api_key:
         st.error("❌ 未配置 Gemini API Key")
         return
@@ -309,29 +309,32 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
 
     total = len(full_db)
     for idx, (sku_name, sku_data) in enumerate(full_db.items()):
-        status_text.text(f"正在诊断: {sku_name} ({idx + 1}/{total})")
+        status_text.text(f"正在分析: {sku_name} ({idx + 1}/{total})")
         progress_bar.progress((idx + 1) / total)
 
         # 运行AI诊断
         result = run_ai_diagnosis(sku_name, sku_data, api_key)
 
-        # 只保存有效的AI诊断结果（high/medium/low），不保存失败的'normal'
-        if result.get('risk_level') in ['high', 'medium', 'low']:
-            try:
-                supabase_client.table("sku_reports").upsert({
-                    "sku_name": sku_name,
-                    "department": current_user,
-                    "report_type": "ai_diagnosis",
-                    "content": result.get('risk_summary', ''),
-                    "risk_level": result.get('risk_level'),
-                    "updated_at": datetime.now().isoformat()
-                }).execute()
-            except Exception as e:
-                st.warning(f"保存 {sku_name} 诊断结果失败: {e}")
-        else:
-            st.info(f"⚠️ {sku_name} AI诊断未返回有效结果，跳过保存")
+        # 构建报告内容
+        report_content = f"""## AI风险分析报告
 
-    status_text.text("✅ 批量诊断完成！")
+**风险等级:** {result.get('risk_level', 'unknown')}
+
+**风险摘要:** {result.get('risk_summary', '')}
+
+**行动建议:**
+{chr(10).join('- ' + item for item in result.get('action_items', [])) if result.get('action_items') else '- 暂无'}
+"""
+        try:
+            supabase_client.table("ai_reports").upsert({
+                "sku_name": sku_name,
+                "content": report_content,
+                "updated_at": datetime.now().isoformat()
+            }).execute()
+        except Exception as e:
+            st.warning(f"保存 {sku_name} 分析结果失败: {e}")
+
+    status_text.text("✅ 批量AI分析完成！")
     st.rerun()
 
 
@@ -385,13 +388,16 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     """, unsafe_allow_html=True)
 
     # 操作栏
-    col1, col2, col3 = st.columns([3, 2, 1])
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
     with col1:
         st.info(f"👤 **{current_user}** | {'管理员' if is_admin else '部门用户'}")
     with col2:
+        if st.button("🤖 一键AI分析", type="primary", use_container_width=True):
+            run_batch_diagnosis(full_db, supabase_client, api_key, current_user)
+    with col3:
         if st.button("🔄 刷新数据", use_container_width=True):
             st.rerun()
-    with col3:
+    with col4:
         if st.button("➕ 新建SKU", use_container_width=True):
             st.session_state.page = 'sku_detail'
             st.rerun()
