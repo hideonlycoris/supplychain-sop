@@ -163,6 +163,9 @@ def update_sku_target_doh(supabase_client, full_db: dict, sku_name: str, new_tar
                 "data": json.dumps(full_db[sku_name], ensure_ascii=False),
                 "updated_at": datetime.now().isoformat()
             }).eq("sku_name", sku_name).execute()
+            # 清除缓存，确保下次加载时重新计算
+            if 'full_db' in st.session_state:
+                del st.session_state['full_db']
         except Exception as e:
             st.error(f"保存失败: {e}")
 
@@ -283,6 +286,15 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     # 初始化session_state
     if 'show_batch_edit' not in st.session_state:
         st.session_state.show_batch_edit = False
+
+    # 重新加载数据，确保风险等级是最新的
+    try:
+        result = supabase_client.table("sku_data").select("*").execute()
+        full_db.clear()
+        for row in result.data:
+            full_db[row["sku_name"]] = json.loads(row["data"])
+    except Exception as e:
+        st.warning(f"重新加载数据失败: {e}")
 
     # 页面标题
     st.markdown("""
