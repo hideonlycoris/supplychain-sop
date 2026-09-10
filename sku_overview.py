@@ -1,5 +1,5 @@
 """
-SKU 总览模块 - 显示所有SKU的摘要信息和AI诊断结果
+SKU 仪表板模块 - 独立首页，显示所有SKU的摘要信息和AI诊断结果
 """
 import streamlit as st
 import pandas as pd
@@ -144,115 +144,11 @@ SKU: {sku_name}
             }
 
     except Exception as e:
-        st.error(f"AI诊断失败: {e}")
         return {
             'risk_level': 'normal',
             'risk_summary': f'诊断异常: {str(e)[:50]}',
             'action_items': []
         }
-
-
-def render_overview_tab(full_db: dict, supabase_client, api_key: str, current_user: str, is_admin: bool):
-    """渲染SKU总览Tab"""
-    st.subheader("📊 SKU 总览与风险诊断")
-
-    # 顶部操作栏
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        st.info(f"👤 当前用户: **{current_user}** | {'管理员模式' if is_admin else '部门模式'}")
-    with col2:
-        if st.button("🔍 一键诊断所有SKU", type="primary"):
-            run_batch_diagnosis(full_db, supabase_client, api_key, current_user)
-    with col3:
-        if st.button("🔄 刷新数据"):
-            st.rerun()
-
-    # 加载诊断结果
-    diagnosis_cache = load_diagnosis_cache(supabase_client)
-
-    # 构建总表数据
-    overview_data = []
-    for sku_name, sku_data in full_db.items():
-        metrics = calculate_sku_metrics(sku_name, sku_data)
-
-        # 获取诊断结果
-        diagnosis = diagnosis_cache.get(sku_name, {})
-        last_diagnosis_time = diagnosis.get('updated_at', '')
-        risk_from_ai = diagnosis.get('risk_level', '')
-        risk_summary = diagnosis.get('risk_summary', '')
-
-        # 如果有新的AI诊断结果，使用它；否则使用计算的风险
-        final_risk = risk_from_ai if risk_from_ai else metrics['risk_level']
-
-        overview_data.append({
-            'sku_name': sku_name,
-            'current_inv': metrics['current_inv'],
-            'target_doh': metrics['target_doh'],
-            'doh': metrics['doh'],
-            'risk_level': final_risk,
-            'risk_summary': risk_summary,
-            'last_diagnosis': last_diagnosis_time,
-            'inventory_value': metrics['inventory_value']
-        })
-
-    if not overview_data:
-        st.info("暂无SKU数据，请先创建SKU。")
-        return
-
-    # 转换为DataFrame
-    df = pd.DataFrame(overview_data)
-
-    # 显示统计卡片
-    st.markdown("---")
-    metric_cols = st.columns(4)
-    with metric_cols[0]:
-        st.metric("📦 SKU总数", len(df))
-    with metric_cols[1]:
-        high_risk = len(df[df['risk_level'] == 'high'])
-        st.metric("🔴 高风险", high_risk, delta=None if high_risk == 0 else f"{high_risk}个需关注")
-    with metric_cols[2]:
-        medium_risk = len(df[df['risk_level'] == 'medium'])
-        st.metric("🟡 中风险", medium_risk)
-    with metric_cols[3]:
-        total_value = df['inventory_value'].sum()
-        st.metric("💰 库存总值", f"${total_value:,.0f}")
-
-    st.markdown("---")
-
-    # 渲染总表
-    st.markdown("### 📋 SKU 风险总表")
-
-    # 样式化显示
-    for idx, row in df.iterrows():
-        risk_color = get_risk_color(row['risk_level'])
-        risk_label = get_risk_label(row['risk_level'])
-
-        with st.container():
-            col_a, col_b, col_c, col_d, col_e = st.columns([2, 1, 1, 1, 1])
-
-            with col_a:
-                st.markdown(f"**{row['sku_name']}**")
-
-            with col_b:
-                inv_color = "normal" if row['current_inv'] >= 0 else "inverse"
-                st.metric("库存", f"{row['current_inv']:,.0f}", delta=None)
-
-            with col_c:
-                st.metric("DOH", f"{row['doh']:.1f}", delta=None)
-
-            with col_d:
-                st.markdown(f"**{risk_label}**")
-
-            with col_e:
-                if st.button("查看详情", key=f"detail_{row['sku_name']}"):
-                    st.session_state['selected_sku'] = row['sku_name']
-                    st.rerun()
-
-            # 如果有风险摘要，显示出来
-            if row['risk_summary']:
-                st.caption(f"📝 {row['risk_summary'][:100]}...")
-
-            st.divider()
 
 
 def load_diagnosis_cache(supabase_client) -> dict:
@@ -268,7 +164,6 @@ def load_diagnosis_cache(supabase_client) -> dict:
             }
         return cache
     except Exception as e:
-        st.warning(f"加载诊断缓存失败: {e}")
         return {}
 
 
@@ -304,3 +199,171 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
 
     status_text.text("✅ 批量诊断完成！")
     st.rerun()
+
+
+def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user: str, is_admin: bool):
+    """渲染独立的仪表板首页"""
+    # 页面标题
+    st.markdown("""
+    <style>
+    .dashboard-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        margin-bottom: 20px;
+    }
+    .metric-card {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    .risk-high { border-left: 4px solid #dc3545; }
+    .risk-medium { border-left: 4px solid #ffc107; }
+    .risk-low { border-left: 4px solid #28a745; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # 顶部标题栏
+    st.markdown("""
+    <div class="dashboard-header">
+        <h1 style="margin:0; color:white;">🚢 供应链 S&OP 仪表板</h1>
+        <p style="margin:5px 0 0 0; color:rgba(255,255,255,0.8);">实时监控所有SKU的库存风险与供需状态</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 操作栏
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+    with col1:
+        st.info(f"👤 **{current_user}** | {'管理员' if is_admin else '部门用户'}")
+    with col2:
+        if st.button("🔍 一键诊断所有SKU", type="primary", use_container_width=True):
+            run_batch_diagnosis(full_db, supabase_client, api_key, current_user)
+    with col3:
+        if st.button("🔄 刷新数据", use_container_width=True):
+            st.rerun()
+    with col4:
+        if st.button("➕ 新建SKU", use_container_width=True):
+            st.session_state.page = 'sku_detail'
+            st.rerun()
+
+    st.markdown("---")
+
+    # 加载诊断结果
+    diagnosis_cache = load_diagnosis_cache(supabase_client)
+
+    # 构建总表数据
+    overview_data = []
+    for sku_name, sku_data in full_db.items():
+        metrics = calculate_sku_metrics(sku_name, sku_data)
+
+        # 获取诊断结果
+        diagnosis = diagnosis_cache.get(sku_name, {})
+        last_diagnosis_time = diagnosis.get('updated_at', '')
+        risk_from_ai = diagnosis.get('risk_level', '')
+        risk_summary = diagnosis.get('risk_summary', '')
+
+        # 如果有新的AI诊断结果，使用它；否则使用计算的风险
+        final_risk = risk_from_ai if risk_from_ai else metrics['risk_level']
+
+        overview_data.append({
+            'sku_name': sku_name,
+            'current_inv': metrics['current_inv'],
+            'target_doh': metrics['target_doh'],
+            'doh': metrics['doh'],
+            'risk_level': final_risk,
+            'risk_summary': risk_summary,
+            'last_diagnosis': last_diagnosis_time,
+            'inventory_value': metrics['inventory_value']
+        })
+
+    if not overview_data:
+        st.info("📦 暂无SKU数据，请点击「➕ 新建SKU」创建。")
+        return
+
+    # 转换为DataFrame
+    df = pd.DataFrame(overview_data)
+
+    # 核心指标卡片
+    st.markdown("### 📊 核心指标")
+    metric_cols = st.columns(5)
+    with metric_cols[0]:
+        st.metric("📦 SKU总数", len(df))
+    with metric_cols[1]:
+        high_risk = len(df[df['risk_level'] == 'high'])
+        st.metric("🔴 高风险", high_risk, delta=f"需立即处理" if high_risk > 0 else None, delta_color="inverse" if high_risk > 0 else "off")
+    with metric_cols[2]:
+        medium_risk = len(df[df['risk_level'] == 'medium'])
+        st.metric("🟡 中风险", medium_risk)
+    with metric_cols[3]:
+        low_risk = len(df[df['risk_level'] == 'low'])
+        st.metric("🟢 正常", low_risk)
+    with metric_cols[4]:
+        total_value = df['inventory_value'].sum()
+        st.metric("💰 库存总值", f"${total_value:,.0f}")
+
+    st.markdown("---")
+
+    # SKU 风险卡片网格
+    st.markdown("### 🎯 SKU 风险总览")
+
+    # 按风险等级排序（高风险优先）
+    risk_order = {'high': 0, 'medium': 1, 'low': 2, 'normal': 3}
+    df['risk_sort'] = df['risk_level'].map(risk_order)
+    df = df.sort_values('risk_sort').drop('risk_sort', axis=1)
+
+    # 使用网格布局显示SKU卡片
+    cols_per_row = 3
+    for i in range(0, len(df), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j, col in enumerate(cols):
+            if i + j < len(df):
+                row = df.iloc[i + j]
+                with col:
+                    risk_color = get_risk_color(row['risk_level'])
+                    risk_label = get_risk_label(row['risk_level'])
+
+                    # SKU卡片
+                    st.markdown(f"""
+                    <div style="border-left: 4px solid {risk_color}; background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 style="margin: 0; font-size: 16px;">{row['sku_name']}</h3>
+                            <span style="font-size: 12px;">{risk_label}</span>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 13px; color: #666;">
+                                <span>库存: <b>{row['current_inv']:,.0f}</b></span>
+                                <span>DOH: <b>{row['doh']:.1f}</b></span>
+                            </div>
+                            <div style="font-size: 12px; color: #999; margin-top: 5px;">
+                                目标DOH: {row['target_doh']} | 库存值: ${row['inventory_value']:,.0f}
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 详情按钮
+                    if st.button("查看详情 →", key=f"goto_{row['sku_name']}", use_container_width=True):
+                        st.session_state.selected_sku = row['sku_name']
+                        st.session_state.page = 'sku_detail'
+                        st.rerun()
+
+    st.markdown("---")
+
+    # 风险摘要（如果有AI诊断结果）
+    risk_items = df[df['risk_level'].isin(['high', 'medium'])]
+    if not risk_items.empty:
+        st.markdown("### ⚠️ 需要关注的SKU")
+        for _, row in risk_items.iterrows():
+            risk_label = get_risk_label(row['risk_level'])
+            with st.expander(f"{risk_label} {row['sku_name']} - {row['risk_summary'][:50]}..." if row['risk_summary'] else f"{risk_label} {row['sku_name']}"):
+                st.write(f"**当前库存:** {row['current_inv']:,.0f} PCS")
+                st.write(f"**DOH:** {row['doh']:.1f} 天 (目标: {row['target_doh']} 天)")
+                if row['risk_summary']:
+                    st.write(f"**诊断摘要:** {row['risk_summary']}")
+                if st.button("进入详情 →", key=f"detail_{row['sku_name']}"):
+                    st.session_state.selected_sku = row['sku_name']
+                    st.session_state.page = 'sku_detail'
+                    st.rerun()

@@ -234,9 +234,39 @@ def _sort_key(sku_name):
         return sku_name.split('-', 1)[1]
     return sku_name
 
+# ============================================================
+# 5. 导航菜单 - 首页仪表板 vs SKU详情
+# ============================================================
+if 'page' not in st.session_state:
+    st.session_state.page = 'dashboard'
+
+# 侧边栏导航
+st.sidebar.markdown("---")
+st.sidebar.subheader("📍 导航")
+if st.sidebar.button("🏠 首页仪表板", use_container_width=True):
+    st.session_state.page = 'dashboard'
+    st.rerun()
+
+# ============================================================
+# 6. 首页仪表板
+# ============================================================
+if st.session_state.page == 'dashboard':
+    from sku_overview import render_dashboard
+    render_dashboard(full_db, supabase, GEMINI_API_KEY, current_user, is_admin)
+    st.stop()  # 停止后续渲染，避免显示SKU详情
+
+# ============================================================
+# 7. SKU 详情页面
+# ============================================================
+# 选择 SKU
 available_skus = sorted(list(full_db.keys()), key=_sort_key) if full_db else ["请先上传或创建SKU"]
 target_sku = st.sidebar.selectbox("🎯 选择 SKU", available_skus)
 sku_key = str(target_sku)
+
+# 返回仪表板按钮
+if st.sidebar.button("← 返回首页"):
+    st.session_state.page = 'dashboard'
+    st.rerun()
 
 # Admin SKU 管理
 if is_admin:
@@ -496,12 +526,7 @@ c2.metric("平均全口径库存", f"{avg_pipe_inv:,.0f} PCS")
 c3.metric("预估平均在仓周转", f"{365 / ito if ito > 0 else 0:.1f} 天")
 c4.metric("周转率(ITO)", f"{round(float(ito), 2)} 次/年")
 
-tab_overview, tab_edit, tab_chart, tab_log, tab_ai = st.tabs(["📊 SKU总览", "📝 计划录入与备注", "📈 供需分析图", "📜 审计日志", "🧠 AI 智能诊断"])
-
-# -------- Tab 0: SKU 总览 --------
-with tab_overview:
-    from sku_overview import render_overview_tab
-    render_overview_tab(full_db, supabase, GEMINI_API_KEY, current_user, is_admin)
+tab_edit, tab_chart, tab_log, tab_ai = st.tabs(["📝 计划录入与备注", "📈 供需分析图", "📜 审计日志", "🧠 AI 智能诊断"])
 
 # -------- Tab 1: 计划录入 --------
 with tab_edit:
