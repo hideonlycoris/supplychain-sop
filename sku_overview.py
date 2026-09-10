@@ -235,6 +235,7 @@ SKU: {sku_name}
 
         response = model.generate_content(prompt)
         result = response.text
+        print(f"[AI DEBUG] {sku_name} 原始返回: {result[:200]}")
 
         # 尝试解析JSON
         import json
@@ -242,23 +243,38 @@ SKU: {sku_name}
             # 移除可能的markdown代码块标记
             clean_result = result.replace('```json', '').replace('```', '').strip()
             parsed = json.loads(clean_result)
+            risk_level = parsed.get('risk_level', '').lower()
+            # 确保返回有效的风险等级
+            if risk_level not in ['high', 'medium', 'low']:
+                risk_level = 'medium'
             return {
-                'risk_level': parsed.get('risk_level', 'normal'),
+                'risk_level': risk_level,
                 'risk_summary': parsed.get('risk_summary', ''),
                 'action_items': parsed.get('action_items', [])
             }
-        except json.JSONDecodeError:
-            # 如果解析失败，返回默认值
+        except json.JSONDecodeError as je:
+            print(f"[AI DEBUG] {sku_name} JSON解析失败: {je}")
+            # 尝试从文本中提取风险等级
+            result_lower = result.lower()
+            if 'high' in result_lower or '高风险' in result:
+                risk_level = 'high'
+            elif 'medium' in result_lower or '中风险' in result:
+                risk_level = 'medium'
+            elif 'low' in result_lower or '低风险' in result:
+                risk_level = 'low'
+            else:
+                risk_level = 'medium'
             return {
-                'risk_level': 'normal',
-                'risk_summary': result[:100] if result else '诊断完成',
+                'risk_level': risk_level,
+                'risk_summary': result[:150] if result else '诊断完成',
                 'action_items': []
             }
 
     except Exception as e:
+        print(f"[AI DEBUG] {sku_name} 诊断异常: {e}")
         return {
-            'risk_level': 'normal',
-            'risk_summary': f'诊断异常: {str(e)[:50]}',
+            'risk_level': 'medium',
+            'risk_summary': f'诊断异常: {str(e)[:100]}',
             'action_items': []
         }
 
