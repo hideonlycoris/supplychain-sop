@@ -202,7 +202,7 @@ def update_sku_target_doh(supabase_client, full_db: dict, sku_name: str, new_tar
             st.error(f"保存失败: {e}")
 
 
-def run_ai_diagnosis(sku_name: str, sku_data: dict, api_key: str, model_name: str = "gemini-3-flash-preview") -> dict:
+def run_ai_diagnosis(sku_name: str, sku_data: dict, api_key: str, model_name: str = "gemini-2.0-flash") -> dict:
     """对单个SKU运行AI诊断"""
     try:
         genai.configure(api_key=api_key)
@@ -296,18 +296,21 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
         # 运行AI诊断
         result = run_ai_diagnosis(sku_name, sku_data, api_key)
 
-        # 保存到数据库
-        try:
-            supabase_client.table("sku_reports").upsert({
-                "sku_name": sku_name,
-                "department": current_user,
-                "report_type": "ai_diagnosis",
-                "content": result.get('risk_summary', ''),
-                "risk_level": result.get('risk_level', 'normal'),
-                "updated_at": datetime.now().isoformat()
-            }).execute()
-        except Exception as e:
-            st.warning(f"保存 {sku_name} 诊断结果失败: {e}")
+        # 只保存有效的AI诊断结果（high/medium/low），不保存失败的'normal'
+        if result.get('risk_level') in ['high', 'medium', 'low']:
+            try:
+                supabase_client.table("sku_reports").upsert({
+                    "sku_name": sku_name,
+                    "department": current_user,
+                    "report_type": "ai_diagnosis",
+                    "content": result.get('risk_summary', ''),
+                    "risk_level": result.get('risk_level'),
+                    "updated_at": datetime.now().isoformat()
+                }).execute()
+            except Exception as e:
+                st.warning(f"保存 {sku_name} 诊断结果失败: {e}")
+        else:
+            st.info(f"⚠️ {sku_name} AI诊断未返回有效结果，跳过保存")
 
     status_text.text("✅ 批量诊断完成！")
     st.rerun()
@@ -393,8 +396,11 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         risk_from_ai = diagnosis.get('risk_level', '')
         risk_summary = diagnosis.get('risk_summary', '')
 
-        # 如果有新的AI诊断结果，使用它；否则使用计算的风险
-        final_risk = risk_from_ai if risk_from_ai else metrics['risk_level']
+        # 只有当AI诊断结果是有效的风险等级时才使用，否则使用计算的风险
+        if risk_from_ai in ['high', 'medium', 'low']:
+            final_risk = risk_from_ai
+        else:
+            final_risk = metrics['risk_level']
 
         overview_data.append({
             'sku_name': sku_name,
