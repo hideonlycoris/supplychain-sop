@@ -401,6 +401,8 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
             'target_doh': metrics['target_doh'],
             'doh': metrics['doh'],
             'risk_level': final_risk,
+            'risk_reason': metrics['risk_reason'],
+            'risk_suggestion': metrics['risk_suggestion'],
             'risk_summary': risk_summary,
             'last_diagnosis': last_diagnosis_time,
             'inventory_value': metrics['inventory_value']
