@@ -126,17 +126,30 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
     # 计算在途库存
     in_transit = current_sim.get("期末在途", 0) if current_month_idx < len(sim_res) else 0
 
-    # 判断风险等级
+    # 判断风险等级和风险说明
+    risk_reason = ""
+    risk_suggestion = ""
+
     if current_inv < 0:
         risk_level = 'high'
+        risk_reason = "库存已为负数，严重缺货"
+        risk_suggestion = "⚠️ 立即补货！建议补货量：至少补货到目标库存水平"
     elif doh < target_doh * 0.5:
         risk_level = 'high'
+        risk_reason = f"库存天数({doh}天)严重不足，低于目标的50%"
+        risk_suggestion = f"⚠️ 紧急补货！建议补货量：{int((target_doh * next_dem / 30) - current_inv)}个，达到目标DOH {target_doh}天"
     elif doh < target_doh:
         risk_level = 'medium'
+        risk_reason = f"库存天数({doh}天)偏低，未达到目标"
+        risk_suggestion = f"💡 建议补货：{int((target_doh * next_dem / 30) - current_inv)}个，达到目标DOH {target_doh}天"
     elif doh > target_doh * 2:
-        risk_level = 'medium'  # 库存过高也是风险
+        risk_level = 'medium'
+        risk_reason = f"库存天数({doh}天)过高，超过目标的2倍"
+        risk_suggestion = "📉 库存过剩，建议减少采购或促销清理"
     else:
         risk_level = 'low'
+        risk_reason = f"库存天数({doh}天)处于合理范围"
+        risk_suggestion = "✅ 库存健康，保持当前采购节奏"
 
     return {
         'sku_name': sku_name,
@@ -146,6 +159,8 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
         'target_doh': target_doh,
         'doh': doh,
         'risk_level': risk_level,
+        'risk_reason': risk_reason,
+        'risk_suggestion': risk_suggestion,
         'price': config.get('price', 0),
         'inventory_value': (current_inv + in_transit) * config.get('price', 0)
     }
@@ -491,6 +506,10 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                                 <span>全口径: <b>{row['total_inventory']:,.0f}</b></span>
                                 <span>DOH: <b>{row['doh']:.1f}</b></span>
                             </div>
+                            <div style="font-size: 12px; color: #888; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;">
+                                <div style="margin-bottom: 4px;">{row['risk_reason']}</div>
+                                <div style="color: {risk_color}; font-weight: 500;">{row['risk_suggestion']}</div>
+                            </div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -534,13 +553,16 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         st.markdown("### ⚠️ 需要关注的SKU")
         for _, row in risk_items.iterrows():
             risk_label = get_risk_label(row['risk_level'])
-            with st.expander(f"{risk_label} {row['sku_name']} - {row['risk_summary'][:50]}..." if row['risk_summary'] else f"{risk_label} {row['sku_name']}"):
+            risk_color = get_risk_color(row['risk_level'])
+            with st.expander(f"{risk_label} {row['sku_name']} - {row['risk_reason'][:30]}...", expanded=True):
                 st.write(f"**在仓库存:** {row['current_inv']:,.0f} PCS")
                 st.write(f"**在途库存:** {row['in_transit']:,.0f} PCS")
                 st.write(f"**全口径库存:** {row['total_inventory']:,.0f} PCS")
                 st.write(f"**DOH:** {row['doh']:.1f} 天 (目标: {row['target_doh']} 天)")
+                st.write(f"**风险说明:** {row['risk_reason']}")
+                st.markdown(f"**处理建议:** {row['risk_suggestion']}")
                 if row['risk_summary']:
-                    st.write(f"**诊断摘要:** {row['risk_summary']}")
+                    st.write(f"**AI诊断摘要:** {row['risk_summary']}")
                 if st.button("进入详情 →", key=f"detail_{row['sku_name']}"):
                     st.session_state.selected_sku = row['sku_name']
                     st.session_state.page = 'sku_detail'
