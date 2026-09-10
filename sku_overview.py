@@ -81,13 +81,19 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
             if actual_total > 0:
                 demand_to_use = actual_total
             else:
+                # 计算累计缺口，但平均分摊到剩余月份
                 shortfall = max(0, cumulative_plan - cumulative_actual)
-                demand_to_use = plan_total + shortfall
+                remaining_months = 12 - today.month + 1  # 剩余月份（含当月）
+                shortfall_per_month = shortfall / remaining_months if remaining_months > 0 else 0
+                demand_to_use = plan_total + shortfall_per_month
             cumulative_plan = 0
             cumulative_actual = 0
         else:
-            # 未来月份：直接使用计划预测
-            demand_to_use = plan_total
+            # 未来月份：使用计划预测 + 平均分摊的缺口
+            shortfall = max(0, cumulative_plan - cumulative_actual)
+            remaining_months = 12 - today.month + 1  # 剩余月份（含当月）
+            shortfall_per_month = shortfall / remaining_months if remaining_months > 0 else 0
+            demand_to_use = plan_total + shortfall_per_month
 
         curr_inv = curr_inv + arr - demand_to_use
 
