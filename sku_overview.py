@@ -130,22 +130,39 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
     risk_reason = ""
     risk_suggestion = ""
 
+    # 计算下月预测销量（用于建议补货量）
+    next_month_idx = min(today.month, 11)  # 下个月的索引
+    next_month_str = f_dates[next_month_idx].strftime('%Y-%m')
+    next_month_demand = sum(dept_plans.get(next_month_str, {}).values())
+
+    # 目标库存 = 目标DOH * 月均销量 / 30
+    if next_month_demand > 0:
+        target_inventory = int(target_doh * next_month_demand / 30)
+    else:
+        target_inventory = current_inv + in_transit  # 无销量时保持当前库存
+
+    # 全口径库存（在仓 + 在途）
+    total_inv = current_inv + in_transit
+
     if current_inv < 0:
         risk_level = 'high'
         risk_reason = "库存已为负数，严重缺货"
-        risk_suggestion = "⚠️ 立即补货！建议补货量：至少补货到目标库存水平"
+        risk_suggestion = f"⚠️ 立即补货！建议补货量：{target_inventory - total_inv}个"
     elif doh < target_doh * 0.5:
         risk_level = 'high'
         risk_reason = f"库存天数({doh}天)严重不足，低于目标的50%"
-        risk_suggestion = f"⚠️ 紧急补货！建议补货量：{int((target_doh * next_dem / 30) - current_inv)}个，达到目标DOH {target_doh}天"
+        shortage = target_inventory - total_inv
+        risk_suggestion = f"⚠️ 紧急补货！建议补货量：{shortage}个，达到目标DOH {target_doh}天"
     elif doh < target_doh:
         risk_level = 'medium'
         risk_reason = f"库存天数({doh}天)偏低，未达到目标"
-        risk_suggestion = f"💡 建议补货：{int((target_doh * next_dem / 30) - current_inv)}个，达到目标DOH {target_doh}天"
+        shortage = target_inventory - total_inv
+        risk_suggestion = f"💡 建议补货：{shortage}个，达到目标DOH {target_doh}天"
     elif doh > target_doh * 2:
         risk_level = 'medium'
         risk_reason = f"库存天数({doh}天)过高，超过目标的2倍"
-        risk_suggestion = "📉 库存过剩，建议减少采购或促销清理"
+        excess = total_inv - target_inventory
+        risk_suggestion = f"📉 库存过剩，建议减少采购或促销清理，过剩量：{excess}个"
     else:
         risk_level = 'low'
         risk_reason = f"库存天数({doh}天)处于合理范围"
@@ -155,14 +172,14 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
         'sku_name': sku_name,
         'current_inv': current_inv,
         'in_transit': in_transit,
-        'total_inventory': current_inv + in_transit,
+        'total_inventory': total_inv,
         'target_doh': target_doh,
         'doh': doh,
         'risk_level': risk_level,
         'risk_reason': risk_reason,
         'risk_suggestion': risk_suggestion,
         'price': config.get('price', 0),
-        'inventory_value': (current_inv + in_transit) * config.get('price', 0)
+        'inventory_value': total_inv * config.get('price', 0)
     }
 
 
