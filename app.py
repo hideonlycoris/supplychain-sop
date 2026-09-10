@@ -260,8 +260,19 @@ if st.session_state.page == 'dashboard':
 # ============================================================
 # 选择 SKU
 available_skus = sorted(list(full_db.keys()), key=_sort_key) if full_db else ["请先上传或创建SKU"]
-target_sku = st.sidebar.selectbox("🎯 选择 SKU", available_skus)
+
+# 如果从仪表板跳转过来，使用 selected_sku
+if 'selected_sku' in st.session_state and st.session_state.selected_sku in available_skus:
+    default_sku_index = available_skus.index(st.session_state.selected_sku)
+else:
+    default_sku_index = 0
+
+target_sku = st.sidebar.selectbox("🎯 选择 SKU", available_skus, index=default_sku_index)
 sku_key = str(target_sku)
+
+# 清除 selected_sku，避免影响下次选择
+if 'selected_sku' in st.session_state:
+    del st.session_state.selected_sku
 
 # 返回仪表板按钮
 if st.sidebar.button("← 返回首页"):
