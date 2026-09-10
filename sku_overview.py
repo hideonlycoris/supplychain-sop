@@ -492,7 +492,7 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                     with target_doh_col1:
                         new_target_doh = st.number_input(
                             "目标DOH",
-                            value=int(row['target_doh']),
+                            value=max(1, int(row['target_doh'])),
                             min_value=1,
                             max_value=365,
                             key=f"input_{target_doh_key}",
