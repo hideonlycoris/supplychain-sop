@@ -346,6 +346,8 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
 
     progress_bar = st.progress(0)
     status_text = st.empty()
+    success_count = 0
+    fail_count = 0
 
     total = len(full_db)
     for idx, (sku_name, sku_data) in enumerate(full_db.items()):
@@ -354,13 +356,20 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
 
         # 运行AI诊断
         result = run_ai_diagnosis(sku_name, sku_data, api_key)
+        print(f"[AI DEBUG] {sku_name} 诊断结果: {result}")
+
+        # 检查结果是否有效
+        if result.get('risk_summary') and result['risk_summary'] != '诊断完成':
+            success_count += 1
+        else:
+            fail_count += 1
 
         # 构建报告内容
         report_content = f"""## AI风险分析报告
 
 **风险等级:** {result.get('risk_level', 'unknown')}
 
-**风险摘要:** {result.get('risk_summary', '')}
+**风险摘要:** {result.get('risk_summary', '暂无')}
 
 **行动建议:**
 {chr(10).join('- ' + item for item in result.get('action_items', [])) if result.get('action_items') else '- 暂无'}
@@ -371,10 +380,12 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
                 "content": report_content,
                 "updated_at": datetime.now().isoformat()
             }).execute()
+            print(f"[AI DEBUG] {sku_name} 保存成功")
         except Exception as e:
+            print(f"[AI DEBUG] {sku_name} 保存失败: {e}")
             st.warning(f"保存 {sku_name} 分析结果失败: {e}")
 
-    status_text.text("✅ 批量AI分析完成！")
+    status_text.text(f"✅ 批量AI分析完成！成功: {success_count}, 失败: {fail_count}")
     st.rerun()
 
 
