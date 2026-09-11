@@ -333,20 +333,15 @@ def load_diagnosis_cache(supabase_client) -> dict:
     try:
         result = supabase_client.table("ai_reports").select("*").execute()
         cache = {}
-        print(f"[AI DEBUG] 加载到 {len(result.data)} 条AI分析记录")
-        # 调试：显示所有记录的SKU名称和内容前100字
         for row in result.data:
             sku_name = row.get('sku_name', '')
             content = row.get('content', '')
-            print(f"[AI DEBUG] SKU: {sku_name}, 内容长度: {len(content)}, 前100字: {content[:100]}")
 
             # 先清理HTML标签
             content = clean_html_tags(content)
 
             # 检查内容是否有效（不是空的或默认的"诊断完成"）
-            print(f"[AI DEBUG] 清理后 {sku_name} 内容长度: {len(content)}, 前50字: {content[:50]}")
             if not content or content.strip() == '' or '诊断完成' in content[:50]:
-                print(f"[AI DEBUG] {sku_name} 内容无效，跳过")
                 continue
 
             # 清理markdown格式，提取有意义的内容
@@ -368,10 +363,6 @@ def load_diagnosis_cache(supabase_client) -> dict:
                     'risk_summary': summary,
                     'updated_at': row.get('updated_at', '')
                 }
-                print(f"[AI DEBUG] 加载 {sku_name} 的AI分析摘要: {summary[:50]}...")
-            else:
-                print(f"[AI DEBUG] {sku_name} 清理后无有效内容")
-        print(f"[AI DEBUG] 缓存中共 {len(cache)} 个SKU的AI分析")
         return cache
     except Exception as e:
         return {}
@@ -495,16 +486,6 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     # 加载各SKU详情页的AI分析结果
     diagnosis_cache = load_diagnosis_cache(supabase_client)
 
-    # 调试信息：显示AI分析缓存状态
-    if diagnosis_cache:
-        st.info(f"📋 已加载 {len(diagnosis_cache)} 个SKU的AI分析数据")
-        # 显示缓存中的SKU名称
-        with st.expander("🔍 查看AI分析缓存详情", expanded=False):
-            for sku_name, data in diagnosis_cache.items():
-                st.write(f"**{sku_name}**: {data['risk_summary'][:100]}...")
-    else:
-        st.warning("📋 暂无AI分析数据，请先进入SKU详情页运行AI诊断")
-
     # 构建总表数据
     overview_data = []
     for sku_name, sku_data in full_db.items():
@@ -615,10 +596,8 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                     st.session_state.show_batch_edit = False
                     st.rerun()
 
-    # 按风险等级排序（高风险优先）
-    risk_order = {'high': 0, 'medium': 1, 'low': 2, 'normal': 3}
-    df['risk_sort'] = df['risk_level'].map(risk_order)
-    df = df.sort_values('risk_sort').drop('risk_sort', axis=1)
+    # 按库存值从高到低排序
+    df = df.sort_values('inventory_value', ascending=False)
 
     # 使用网格布局显示SKU卡片
     cols_per_row = 3
