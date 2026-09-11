@@ -408,10 +408,10 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     st.markdown("""
     <style>
     .stApp {
-        background-color: #2c4a52;
+        background-color: #f5f6fa;
     }
     .dashboard-header {
-        background: linear-gradient(135deg, #1a3a42 0%, #2c5a62 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 20px;
         border-radius: 10px;
         color: white;
@@ -586,24 +586,24 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
 
                     # SKU卡片
                     st.markdown(f"""
-                    <div style="border-left: 4px solid {risk_color}; background: #3a5a62; padding: 15px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                    <div style="border-left: 4px solid {risk_color}; background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <h3 style="margin: 0; font-size: 16px; color: #ffffff;">{row['sku_name']}</h3>
-                            <span style="font-size: 13px; font-weight: 600; color: #ffffff;">{risk_label}</span>
+                            <h3 style="margin: 0; font-size: 16px;">{row['sku_name']}</h3>
+                            <span style="font-size: 13px; font-weight: 600;">{risk_label}</span>
                         </div>
                         <div style="margin-top: 10px;">
-                            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #e0e0e0;">
+                            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #333;">
                                 <span>在仓: <b>{row['current_inv']:,.0f}</b></span>
                                 <span>在途: <b>{row['in_transit']:,.0f}</b></span>
                             </div>
-                            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #e0e0e0; margin-top: 5px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #333; margin-top: 5px;">
                                 <span>全口径: <b>{row['total_inventory']:,.0f}</b></span>
                                 <span>DOH: <b>{row['doh']:.1f}</b></span>
                             </div>
-                            <div style="margin-top: 10px; padding: 10px; background: #2c4a52; border-radius: 6px; border: 1px solid #4a6a72;">
-                                <div style="font-size: 13px; color: #b0c0c8; margin-bottom: 6px;">{row['risk_reason']}</div>
-                                <div style="font-size: 14px; color: #ff6b6b; font-weight: 600;">{row['risk_suggestion']}</div>
-                                {'<div style="font-size: 12px; color: #8aa0a8; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #4a6a72;"><b>📋 AI分析:</b> ' + row['risk_summary'] + '</div>' if row['risk_summary'] else ''}
+                            <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 6px; border: 1px solid #e9ecef;">
+                                <div style="font-size: 13px; color: #495057; margin-bottom: 6px;">{row['risk_reason']}</div>
+                                <div style="font-size: 14px; color: #c0392b; font-weight: 600;">{row['risk_suggestion']}</div>
+                                {'<div style="font-size: 12px; color: #6c757d; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dee2e6;"><b>📋 AI分析:</b> ' + row['risk_summary'] + '</div>' if row['risk_summary'] else ''}
                             </div>
                         </div>
                     </div>
