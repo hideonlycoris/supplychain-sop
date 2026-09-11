@@ -482,19 +482,12 @@ for i, d in enumerate(f_dates):
         if actual_total > 0:
             demand_to_use = actual_total
         else:
-            # 计算累计缺口，但平均分摊到剩余月份
-            shortfall = max(0, cumulative_plan - cumulative_actual)
-            remaining_months = 12 - current_month + 1  # 剩余月份（含当月）
-            shortfall_per_month = shortfall / remaining_months if remaining_months > 0 else 0
-            demand_to_use = plan_total + shortfall_per_month
+            demand_to_use = plan_total
         cumulative_plan = 0
         cumulative_actual = 0
     else:
-        # 未来月份：使用计划预测 + 平均分摊的缺口
-        shortfall = max(0, cumulative_plan - cumulative_actual)
-        remaining_months = 12 - current_month + 1  # 剩余月份（含当月）
-        shortfall_per_month = shortfall / remaining_months if remaining_months > 0 else 0
-        demand_to_use = plan_total + shortfall_per_month
+        # 未来月份：直接使用计划预测
+        demand_to_use = plan_total
 
     curr_inv = curr_inv + arr - demand_to_use
 
