@@ -134,6 +134,14 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
     next_month_str = f_dates[next_month_idx].strftime('%Y-%m')
     next_month_demand = sum(dept_plans.get(next_month_str, {}).values())
 
+    # 计算海运周期内的需求（用于扣除已承诺库存）
+    lt_months = int(row_data.get('物流时效(月)', 1))
+    demand_during_lt = 0
+    for j in range(lt_months):
+        lt_month_idx = min(today.month - 1 + j, 11)
+        lt_month_str = f_dates[lt_month_idx].strftime('%Y-%m')
+        demand_during_lt += sum(dept_plans.get(lt_month_str, {}).values())
+
     # 目标库存 = 目标DOH * 月均销量 / 30
     if next_month_demand > 0:
         target_inventory = int(target_doh * next_month_demand / 30)
@@ -146,21 +154,29 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
     if current_inv < 0:
         risk_level = 'high'
         risk_reason = "库存已为负数，严重缺货"
-        risk_suggestion = f"⚠️ 立即补货！建议补货量：{target_inventory - total_inv}个"
+        shortage = target_inventory + demand_during_lt - total_inv
+        shortage = max(0, shortage)
+        risk_suggestion = f"⚠️ 立即补货！建议补货量：{shortage}个"
     elif doh < target_doh * 0.5:
         risk_level = 'high'
         risk_reason = f"库存天数({doh}天)严重不足，低于目标的50%"
-        shortage = target_inventory - total_inv
+        # 缺货量 = 目标库存 + 海运周期内需求 - 全口径库存
+        shortage = target_inventory + demand_during_lt - total_inv
+        shortage = max(0, shortage)
         risk_suggestion = f"⚠️ 紧急补货！建议补货量：{shortage}个，达到目标DOH {target_doh}天"
     elif doh < target_doh:
         risk_level = 'medium'
         risk_reason = f"库存天数({doh}天)偏低，未达到目标"
-        shortage = target_inventory - total_inv
+        # 缺货量 = 目标库存 + 海运周期内需求 - 全口径库存
+        shortage = target_inventory + demand_during_lt - total_inv
+        shortage = max(0, shortage)
         risk_suggestion = f"💡 建议补货：{shortage}个，达到目标DOH {target_doh}天"
     elif doh > target_doh * 2:
         risk_level = 'medium'
         risk_reason = f"库存天数({doh}天)过高，超过目标的2倍"
-        excess = total_inv - target_inventory
+        # 过剩量 = 全口径库存 - 目标库存 - 海运周期内需求（已承诺库存）
+        excess = total_inv - target_inventory - demand_during_lt
+        excess = max(0, excess)  # 确保不为负数
         risk_suggestion = f"📉 库存过剩，建议减少采购或促销清理，过剩量：{excess}个"
     else:
         risk_level = 'low'
