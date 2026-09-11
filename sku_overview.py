@@ -333,6 +333,7 @@ def load_diagnosis_cache(supabase_client) -> dict:
     try:
         result = supabase_client.table("ai_reports").select("*").execute()
         cache = {}
+        print(f"[AI DEBUG] 加载到 {len(result.data)} 条AI分析记录")
         for row in result.data:
             sku_name = row.get('sku_name', '')
             content = row.get('content', '')
@@ -344,24 +345,27 @@ def load_diagnosis_cache(supabase_client) -> dict:
             if not content or content.strip() == '' or '诊断完成' in content[:50]:
                 continue
 
-            # 截取前150字作为摘要，去掉markdown格式
+            # 清理markdown格式，提取有意义的内容
             summary = content.replace('#', '').replace('**', '').replace('---', '').strip()
             # 找到有意义的内容开始位置
             lines = summary.split('\n')
             meaningful_lines = []
+            skip_keywords = ['AI风险分析报告', '行动建议:', '暂无', '</div>', '</div>', '分析时间:']
             for line in lines:
                 line = line.strip()
-                if line and line not in ['AI风险分析报告', '行动建议:', '暂无', '</div>', '</div>']:
+                if line and not any(kw in line for kw in skip_keywords):
                     meaningful_lines.append(line)
-                if len(meaningful_lines) >= 3:
+                if len(meaningful_lines) >= 5:  # 取前5行有意义的内容
                     break
-            summary = ' '.join(meaningful_lines)[:150] + '...' if meaningful_lines else ''
+            summary = ' '.join(meaningful_lines)[:300] + '...' if len(' '.join(meaningful_lines)) > 300 else ' '.join(meaningful_lines)
 
             if summary:  # 只有有内容时才加入缓存
                 cache[sku_name] = {
                     'risk_summary': summary,
                     'updated_at': row.get('updated_at', '')
                 }
+                print(f"[AI DEBUG] 加载 {sku_name} 的AI分析摘要: {summary[:50]}...")
+        print(f"[AI DEBUG] 缓存中共 {len(cache)} 个SKU的AI分析")
         return cache
     except Exception as e:
         return {}
@@ -484,6 +488,16 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
 
     # 加载各SKU详情页的AI分析结果
     diagnosis_cache = load_diagnosis_cache(supabase_client)
+
+    # 调试信息：显示AI分析缓存状态
+    if diagnosis_cache:
+        st.info(f"📋 已加载 {len(diagnosis_cache)} 个SKU的AI分析数据")
+        # 显示缓存中的SKU名称
+        with st.expander("🔍 查看AI分析缓存详情", expanded=False):
+            for sku_name, data in diagnosis_cache.items():
+                st.write(f"**{sku_name}**: {data['risk_summary'][:100]}...")
+    else:
+        st.warning("📋 暂无AI分析数据，请先进入SKU详情页运行AI诊断")
 
     # 构建总表数据
     overview_data = []
@@ -630,11 +644,15 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                             <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 6px; border: 1px solid #e9ecef;">
                                 <div style="font-size: 13px; color: #495057; margin-bottom: 6px;">{row['risk_reason']}</div>
                                 <div style="font-size: 14px; color: #c0392b; font-weight: 600;">{row['risk_suggestion']}</div>
-                                {'<div style="font-size: 12px; color: #6c757d; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dee2e6;"><b>📋 AI分析:</b> ' + row['risk_summary'] + '</div>' if row['risk_summary'] else ''}
                             </div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
+
+                    # AI分析摘要（如果有）- 使用expander显示完整内容
+                    if row['risk_summary']:
+                        with st.expander("📋 AI分析摘要", expanded=False):
+                            st.write(row['risk_summary'])
 
                     # 目标DOH编辑区
                     target_doh_key = f"target_doh_{row['sku_name']}"
