@@ -459,6 +459,7 @@ sim_res = []
 curr_inv = int(working_db["config"]["init_inv"])
 cumulative_plan = 0
 cumulative_actual = 0
+current_month = int(today_str.split('-')[1])  # 当前月份
 
 for i, d in enumerate(f_dates):
     ds = d.strftime('%Y-%m')
@@ -483,7 +484,7 @@ for i, d in enumerate(f_dates):
         else:
             # 计算累计缺口，但平均分摊到剩余月份
             shortfall = max(0, cumulative_plan - cumulative_actual)
-            remaining_months = 12 - today.month + 1  # 剩余月份（含当月）
+            remaining_months = 12 - current_month + 1  # 剩余月份（含当月）
             shortfall_per_month = shortfall / remaining_months if remaining_months > 0 else 0
             demand_to_use = plan_total + shortfall_per_month
         cumulative_plan = 0
@@ -491,7 +492,7 @@ for i, d in enumerate(f_dates):
     else:
         # 未来月份：使用计划预测 + 平均分摊的缺口
         shortfall = max(0, cumulative_plan - cumulative_actual)
-        remaining_months = 12 - today.month + 1  # 剩余月份（含当月）
+        remaining_months = 12 - current_month + 1  # 剩余月份（含当月）
         shortfall_per_month = shortfall / remaining_months if remaining_months > 0 else 0
         demand_to_use = plan_total + shortfall_per_month
 
