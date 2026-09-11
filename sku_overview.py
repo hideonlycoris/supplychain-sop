@@ -326,12 +326,29 @@ def load_diagnosis_cache(supabase_client) -> dict:
         for row in result.data:
             sku_name = row.get('sku_name', '')
             content = row.get('content', '')
-            # 截取前200字作为摘要
-            summary = content[:200] + '...' if len(content) > 200 else content
-            cache[sku_name] = {
-                'risk_summary': summary,
-                'updated_at': row.get('updated_at', '')
-            }
+
+            # 检查内容是否有效（不是空的或默认的"诊断完成"）
+            if not content or content.strip() == '' or '诊断完成' in content[:50]:
+                continue
+
+            # 截取前150字作为摘要，去掉markdown格式
+            summary = content.replace('#', '').replace('**', '').replace('---', '').strip()
+            # 找到有意义的内容开始位置
+            lines = summary.split('\n')
+            meaningful_lines = []
+            for line in lines:
+                line = line.strip()
+                if line and line not in ['AI风险分析报告', '行动建议:', '暂无']:
+                    meaningful_lines.append(line)
+                if len(meaningful_lines) >= 3:
+                    break
+            summary = ' '.join(meaningful_lines)[:150] + '...' if meaningful_lines else ''
+
+            if summary:  # 只有有内容时才加入缓存
+                cache[sku_name] = {
+                    'risk_summary': summary,
+                    'updated_at': row.get('updated_at', '')
+                }
         return cache
     except Exception as e:
         return {}
