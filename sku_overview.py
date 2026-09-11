@@ -439,16 +439,13 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     """, unsafe_allow_html=True)
 
     # 操作栏
-    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+    col1, col2, col3 = st.columns([3, 2, 1])
     with col1:
         st.info(f"👤 **{current_user}** | {'管理员' if is_admin else '部门用户'}")
     with col2:
-        if st.button("🤖 一键AI分析", type="primary", use_container_width=True):
-            run_batch_diagnosis(full_db, supabase_client, api_key, current_user)
-    with col3:
         if st.button("🔄 刷新数据", use_container_width=True):
             st.rerun()
-    with col4:
+    with col3:
         if st.button("➕ 新建SKU", use_container_width=True):
             st.session_state.page = 'sku_detail'
             st.rerun()
