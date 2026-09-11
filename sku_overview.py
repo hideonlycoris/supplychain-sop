@@ -135,7 +135,6 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
     next_month_demand = sum(dept_plans.get(next_month_str, {}).values())
 
     # 计算海运周期内的需求（用于扣除已承诺库存）
-    lt_months = int(row_data.get('物流时效(月)', 1))
     demand_during_lt = 0
     for j in range(lt_months):
         lt_month_idx = min(today.month - 1 + j, 11)
