@@ -349,7 +349,7 @@ def load_diagnosis_cache(supabase_client) -> dict:
             # 找到有意义的内容开始位置
             lines = summary.split('\n')
             meaningful_lines = []
-            skip_keywords = ['AI风险分析报告', '行动建议:', '暂无', '</div>', '</div>', '分析时间:']
+            skip_keywords = ['AI风险分析报告', '行动建议:', '暂无', '分析时间:']
             for line in lines:
                 line = line.strip()
                 if line and not any(kw in line for kw in skip_keywords):
@@ -365,6 +365,7 @@ def load_diagnosis_cache(supabase_client) -> dict:
                 }
         return cache
     except Exception as e:
+        print(f"[AI DEBUG] load_diagnosis_cache 异常: {e}")
         return {}
 
 
@@ -485,6 +486,7 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
 
     # 加载各SKU详情页的AI分析结果
     diagnosis_cache = load_diagnosis_cache(supabase_client)
+    print(f"[AI DEBUG] 首页加载到 {len(diagnosis_cache)} 个SKU的AI分析缓存: {list(diagnosis_cache.keys())}")
 
     # 构建总表数据
     overview_data = []
