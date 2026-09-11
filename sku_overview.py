@@ -318,6 +318,16 @@ SKU: {sku_name}
         }
 
 
+def clean_html_tags(text):
+    """清理HTML标签"""
+    import re
+    # 移除HTML标签
+    clean = re.sub(r'<[^>]+>', '', text)
+    # 移除多余空格
+    clean = re.sub(r'\s+', ' ', clean)
+    return clean.strip()
+
+
 def load_diagnosis_cache(supabase_client) -> dict:
     """从 ai_reports 表加载各SKU详情页的AI分析结果"""
     try:
@@ -326,6 +336,9 @@ def load_diagnosis_cache(supabase_client) -> dict:
         for row in result.data:
             sku_name = row.get('sku_name', '')
             content = row.get('content', '')
+
+            # 先清理HTML标签
+            content = clean_html_tags(content)
 
             # 检查内容是否有效（不是空的或默认的"诊断完成"）
             if not content or content.strip() == '' or '诊断完成' in content[:50]:
@@ -338,7 +351,7 @@ def load_diagnosis_cache(supabase_client) -> dict:
             meaningful_lines = []
             for line in lines:
                 line = line.strip()
-                if line and line not in ['AI风险分析报告', '行动建议:', '暂无']:
+                if line and line not in ['AI风险分析报告', '行动建议:', '暂无', '</div>', '</div>']:
                     meaningful_lines.append(line)
                 if len(meaningful_lines) >= 3:
                     break
@@ -653,26 +666,3 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
                         st.session_state.selected_sku = row['sku_name']
                         st.session_state.page = 'sku_detail'
                         st.rerun()
-
-    st.markdown("---")
-
-    # 风险摘要（如果有AI诊断结果）
-    risk_items = df[df['risk_level'].isin(['high', 'medium'])]
-    if not risk_items.empty:
-        st.markdown("### ⚠️ 需要关注的SKU")
-        for _, row in risk_items.iterrows():
-            risk_label = get_risk_label(row['risk_level'])
-            risk_color = get_risk_color(row['risk_level'])
-            with st.expander(f"{risk_label} {row['sku_name']} - {row['risk_reason'][:30]}...", expanded=True):
-                st.write(f"**在仓库存:** {row['current_inv']:,.0f} PCS")
-                st.write(f"**在途库存:** {row['in_transit']:,.0f} PCS")
-                st.write(f"**全口径库存:** {row['total_inventory']:,.0f} PCS")
-                st.write(f"**DOH:** {row['doh']:.1f} 天 (目标: {row['target_doh']} 天)")
-                st.write(f"**风险说明:** {row['risk_reason']}")
-                st.markdown(f"**处理建议:** {row['risk_suggestion']}")
-                if row['risk_summary']:
-                    st.write(f"**AI诊断摘要:** {row['risk_summary']}")
-                if st.button("进入详情 →", key=f"detail_{row['sku_name']}"):
-                    st.session_state.selected_sku = row['sku_name']
-                    st.session_state.page = 'sku_detail'
-                    st.rerun()
