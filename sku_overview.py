@@ -334,18 +334,17 @@ def load_diagnosis_cache(supabase_client) -> dict:
         result = supabase_client.table("ai_reports").select("*").execute()
         cache = {}
         print(f"[AI DEBUG] 加载到 {len(result.data)} 条AI分析记录")
-        # 调试：显示所有记录的SKU名称
-        all_skus = [row.get('sku_name', '') for row in result.data]
-        print(f"[AI DEBUG] 所有SKU: {all_skus}")
+        # 调试：显示所有记录的SKU名称和内容前100字
         for row in result.data:
             sku_name = row.get('sku_name', '')
             content = row.get('content', '')
+            print(f"[AI DEBUG] SKU: {sku_name}, 内容长度: {len(content)}, 前100字: {content[:100]}")
 
             # 先清理HTML标签
             content = clean_html_tags(content)
 
             # 检查内容是否有效（不是空的或默认的"诊断完成"）
-            print(f"[AI DEBUG] {sku_name} 内容长度: {len(content)}, 前50字: {content[:50]}")
+            print(f"[AI DEBUG] 清理后 {sku_name} 内容长度: {len(content)}, 前50字: {content[:50]}")
             if not content or content.strip() == '' or '诊断完成' in content[:50]:
                 print(f"[AI DEBUG] {sku_name} 内容无效，跳过")
                 continue
