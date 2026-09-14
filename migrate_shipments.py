@@ -5,12 +5,22 @@
 import json
 import os
 from supabase import create_client
-from dotenv import load_dotenv
 
-load_dotenv()
+# Supabase配置
+SUPABASE_URL = "https://qdkcbsunyustkxkcrnvc.supabase.co"
+SUPABASE_KEY = "sb_publishable_-IoU1wPbpDBXSny2Em6mmQ_zkMiz0Dd"
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("=" * 50)
+    print("请先配置Supabase连接信息！")
+    print("=" * 50)
+    print("步骤：")
+    print("1. 打开 https://share.streamlit.io/")
+    print("2. 找到你的应用 -> 点击 '...' -> Settings -> Secrets")
+    print("3. 复制 SUPABASE_URL 和 SUPABASE_KEY 的值")
+    print("4. 填入本文件顶部的 SUPABASE_URL 和 SUPABASE_KEY 变量")
+    print("=" * 50)
+    exit(1)
 
 DEPTS = ["一部", "四部", "五部", "珍组", "琪组", "tt"]
 
@@ -25,6 +35,14 @@ def migrate_shipments():
     for row in result.data:
         sku_name = row.get("sku_name", "")
         data = row.get("data", {})
+
+        # 如果data是字符串，需要解析JSON
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                print(f"[SKIP] {sku_name} 数据格式错误")
+                continue
 
         dept_plans = data.get("dept_plans", {})
         shipments = data.get("shipments", {})
@@ -68,9 +86,9 @@ def migrate_shipments():
 
             print(f"  {month}: {total_shipment} -> {new_shipments[month]}")
 
-        # 更新数据
+        # 更新数据（转换为JSON字符串）
         data["shipments"] = new_shipments
-        supabase.table("sku_data").update({"data": data}).eq("sku_name", sku_name).execute()
+        supabase.table("sku_data").update({"data": json.dumps(data)}).eq("sku_name", sku_name).execute()
         print(f"[DONE] {sku_name} 迁移完成")
 
     print("\n迁移完成！")

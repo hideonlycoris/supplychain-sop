@@ -451,7 +451,12 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         result = supabase_client.table("sku_data").select("*").execute()
         full_db.clear()
         for row in result.data:
-            full_db[row["sku_name"]] = json.loads(row["data"])
+            data = row["data"]
+            # 兼容两种格式：JSON字符串或字典
+            if isinstance(data, str):
+                full_db[row["sku_name"]] = json.loads(data)
+            else:
+                full_db[row["sku_name"]] = data
     except Exception as e:
         st.warning(f"重新加载数据失败: {e}")
 
