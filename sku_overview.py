@@ -67,7 +67,9 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
 
         if i >= lt_months:
             ship_month = f_dates[i - lt_months].strftime('%Y-%m')
-            arr = shipments.get(ship_month, 0)
+            # 兼容新旧格式：如果是字典则求和，如果是数值则直接使用
+            ship_data = shipments.get(ship_month, 0)
+            arr = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
         else:
             arr = 0
 
@@ -91,7 +93,9 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
         curr_inv = curr_inv + arr - demand_to_use
 
         in_transit = sum([
-            shipments.get(f_dates[i - j].strftime('%Y-%m'), 0)
+            sum(shipments.get(f_dates[i - j].strftime('%Y-%m'), {}).values())
+            if isinstance(shipments.get(f_dates[i - j].strftime('%Y-%m'), 0), dict)
+            else shipments.get(f_dates[i - j].strftime('%Y-%m'), 0)
             for j in range(lt_months) if i - j >= 0
         ])
 

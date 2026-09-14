@@ -373,8 +373,9 @@ for row_idx_str, changes in st.session_state[delta_key].items():
                 working_db.setdefault("notes", {})[m] = str(val)
             else:
                 val = int(float(val)) if val not in [None, ""] else 0
-                if col == "发货计划(ETD)" and is_admin:
-                    working_db["shipments"][m] = val
+                if "_发货" in col and is_admin:
+                    dept = col.split("_")[0]
+                    working_db.setdefault("shipments", {}).setdefault(m, {})[dept] = val
                 elif "_预测" in col:
                     dept = col.split("_")[0]
                     working_db.setdefault("dept_plans", {}).setdefault(m, {})[dept] = val
@@ -396,52 +397,67 @@ if is_admin:
     if st.sidebar.button("🤖 执行精准补货推演", type="primary"):
         today_m = today_str
         all_dates = pd.date_range(start="2026-01-01", periods=24, freq='MS')
-        true_demands = []
-        for d in all_dates:
-            m_str = d.strftime('%Y-%m')
-            if m_str < today_m:
-                val = sum(working_db.get("actual_sales", {}).get(m_str, {}).values())
-            else:
-                ref_m = m_str if d.year == 2026 else "2026-12"
-                val = sum(working_db.get("dept_plans", {}).get(ref_m, {}).values())
-            true_demands.append(float(val))
 
+        # 按部门分别计算补货
         new_shipments = {}
-        arrival_queue = [0.0] * 36
-        for i in range(12):
-            ds_t = all_dates[i].strftime('%Y-%m')
-            if i < frozen_m:
-                val = float(working_db["shipments"].get(ds_t, 0))
-                new_shipments[ds_t] = val
-                if i + lt_months < 36:
-                    arrival_queue[i + lt_months] += val
-            else:
-                new_shipments[ds_t] = 0.0
+        for dept in DEPTS:
+            # 获取该部门的需求数据
+            dept_demands = []
+            for d in all_dates:
+                m_str = d.strftime('%Y-%m')
+                if m_str < today_m:
+                    val = working_db.get("actual_sales", {}).get(m_str, {}).get(dept, 0)
+                else:
+                    ref_m = m_str if d.year == 2026 else "2026-12"
+                    val = working_db.get("dept_plans", {}).get(ref_m, {}).get(dept, 0)
+                dept_demands.append(float(val))
 
-        sim_inv = float(init_inv)
-        for i in range(12):
-            ds_t = all_dates[i].strftime('%Y-%m')
-            sim_inv += arrival_queue[i]
-            if i >= frozen_m:
-                arrival_idx = i + lt_months
-                target_stock = 0.0
-                days_to_cover = target_doh
-                temp_idx = arrival_idx + 1
-                while days_to_cover > 0 and temp_idx < len(true_demands):
-                    if days_to_cover >= 30:
-                        target_stock += true_demands[temp_idx]
-                        days_to_cover -= 30
-                    else:
-                        target_stock += true_demands[temp_idx] * (days_to_cover / 30)
-                        days_to_cover = 0
-                    temp_idx += 1
-                gap = (sum(true_demands[i: arrival_idx + 1]) + target_stock) - \
-                      (sim_inv + sum(arrival_queue[i + 1: arrival_idx + 1]))
-                suggestion = max(0.0, gap)
-                new_shipments[ds_t] = int(suggestion)
-                if i + lt_months < 36:
-                    arrival_queue[i + lt_months] += suggestion
-            sim_inv -= true_demands[i]
+            # 该部门的初始库存（按比例分配）
+            total_plan = sum(sum(v.values()) for v in working_db.get("dept_plans", {}).values())
+            if total_plan > 0:
+                dept_ratio = sum(working_db.get("dept_plans", {}).get(m, {}).get(dept, 0)
+                                for m in working_db.get("dept_plans", {}).keys()) / total_plan
+            else:
+                dept_ratio = 1.0 / len(DEPTS)
+            dept_init_inv = int(init_inv * dept_ratio)
+
+            # 该部门的发货队列
+            dept_arrival_queue = [0.0] * 36
+            for i in range(12):
+                ds_t = all_dates[i].strftime('%Y-%m')
+                if i < frozen_m:
+                    val = float(working_db.get("shipments", {}).get(ds_t, {}).get(dept, 0))
+                    new_shipments.setdefault(ds_t, {})[dept] = int(val)
+                    if i + lt_months < 36:
+                        dept_arrival_queue[i + lt_months] += val
+                else:
+                    new_shipments.setdefault(ds_t, {})[dept] = 0
+
+            # 模拟该部门的库存和补货
+            sim_inv = float(dept_init_inv)
+            for i in range(12):
+                ds_t = all_dates[i].strftime('%Y-%m')
+                sim_inv += dept_arrival_queue[i]
+                if i >= frozen_m:
+                    arrival_idx = i + lt_months
+                    target_stock = 0.0
+                    days_to_cover = target_doh
+                    temp_idx = arrival_idx + 1
+                    while days_to_cover > 0 and temp_idx < len(dept_demands):
+                        if days_to_cover >= 30:
+                            target_stock += dept_demands[temp_idx]
+                            days_to_cover -= 30
+                        else:
+                            target_stock += dept_demands[temp_idx] * (days_to_cover / 30)
+                            days_to_cover = 0
+                        temp_idx += 1
+                    gap = (sum(dept_demands[i: arrival_idx + 1]) + target_stock) - \
+                          (sim_inv + sum(dept_arrival_queue[i + 1: arrival_idx + 1]))
+                    suggestion = max(0.0, gap)
+                    new_shipments[ds_t][dept] = int(suggestion)
+                    if i + lt_months < 36:
+                        dept_arrival_queue[i + lt_months] += suggestion
+                sim_inv -= dept_demands[i]
 
         working_db["shipments"] = new_shipments
         full_db[sku_key] = working_db
@@ -468,7 +484,9 @@ for i, d in enumerate(f_dates):
 
     if i >= lt_months:
         ship_month = f_dates[i - lt_months].strftime('%Y-%m')
-        arr = working_db["shipments"].get(ship_month, 0)
+        # 兼容新旧格式：如果是字典则求和，如果是数值则直接使用
+        ship_data = working_db["shipments"].get(ship_month, 0)
+        arr = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
     else:
         arr = 0
 
@@ -492,7 +510,9 @@ for i, d in enumerate(f_dates):
     curr_inv = curr_inv + arr - demand_to_use
 
     in_transit = sum([
-        working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), 0)
+        sum(working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), {}).values())
+        if isinstance(working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), 0), dict)
+        else working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), 0)
         for j in range(lt_months) if i - j >= 0
     ])
 
@@ -503,9 +523,13 @@ for i, d in enumerate(f_dates):
     else:
         doh = 999.0 if curr_inv > 0 else 0.0
 
+    # 兼容新旧格式计算发货总量
+    ship_data = working_db["shipments"].get(ds, 0)
+    ship_total = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
+
     sim_res.append({
         "月份": ds, "计划预测": int(plan_total), "实际销量": int(actual_total),
-        "发货(ETD)": int(working_db["shipments"].get(ds, 0)), "预计到货": int(arr),
+        "发货(ETD)": int(ship_total), "预计到货": int(arr),
         "期末在仓": int(curr_inv), "期末在途": int(in_transit),
         "全口径库存": int(curr_inv + in_transit),
         "DOH": doh, "备注": working_db.get("notes", {}).get(ds, "")
@@ -545,9 +569,11 @@ with tab_edit:
     edit_data = []
     for i, r in sim_df.iterrows():
         m = r["月份"]
-        row = {"月份": m, "发货计划(ETD)": r["发货(ETD)"], "备注": r["备注"]}
+        row = {"月份": m, "备注": r["备注"]}
         target_depts = DEPTS if is_admin else [current_user]
+        # 发货数据按部门分开
         for dept in target_depts:
+            row[f"{dept}_发货"] = working_db.get("shipments", {}).get(m, {}).get(dept, 0)
             row[f"{dept}_预测"] = working_db.get("dept_plans", {}).get(m, {}).get(dept, 0)
             row[f"{dept}_实绩"] = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
         edit_data.append(row)
