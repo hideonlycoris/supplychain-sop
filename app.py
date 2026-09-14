@@ -535,9 +535,10 @@ for i, d in enumerate(f_dates):
     ship_data = working_db["shipments"].get(ds, 0)
     ship_total = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
 
-    # 构建各部门数据
+    # 构建各部门数据（根据权限限制）
     dept_row = {}
-    for dept in DEPTS:
+    view_depts = DEPTS if is_admin else [current_user]
+    for dept in view_depts:
         # 该部门的发货数据
         dept_ship = ship_data.get(dept, 0) if isinstance(ship_data, dict) else 0
         # 该部门的预测数据
