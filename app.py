@@ -532,12 +532,51 @@ for i, d in enumerate(f_dates):
     ship_data = working_db["shipments"].get(ds, 0)
     ship_total = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
 
+    # 构建各部门数据
+    dept_row = {}
+    for dept in DEPTS:
+        # 该部门的发货数据
+        dept_ship = ship_data.get(dept, 0) if isinstance(ship_data, dict) else 0
+        # 该部门的预测数据
+        dept_plan = working_db.get("dept_plans", {}).get(ds, {}).get(dept, 0)
+        # 该部门的实绩数据
+        dept_actual = working_db.get("actual_sales", {}).get(ds, {}).get(dept, 0)
+
+        # 计算该部门的预计到货（按比例分配）
+        if ship_total > 0:
+            dept_ratio = dept_ship / ship_total
+        else:
+            dept_ratio = 1.0 / len(DEPTS) if len(DEPTS) > 0 else 0
+        dept_arr = int(arr * dept_ratio)
+
+        # 计算该部门的期末库存（简化计算：按比例分配）
+        if curr_inv > 0 or in_transit > 0:
+            total_inv = curr_inv + in_transit
+            dept_inv = int(total_inv * dept_ratio)
+        else:
+            dept_inv = 0
+
+        # 计算该部门的DOH
+        dept_next_dem = working_db.get("dept_plans", {}).get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).get(dept, 0)
+        if dept_next_dem > 0:
+            dept_doh = round(dept_inv / (dept_next_dem / 30), 1)
+        else:
+            dept_doh = 999.0 if dept_inv > 0 else 0.0
+
+        dept_row[f"{dept}_发货"] = dept_ship
+        dept_row[f"{dept}_预测"] = dept_plan
+        dept_row[f"{dept}_实绩"] = dept_actual
+        dept_row[f"{dept}_到货"] = dept_arr
+        dept_row[f"{dept}_库存"] = dept_inv
+        dept_row[f"{dept}_DOH"] = dept_doh
+
     sim_res.append({
         "月份": ds, "计划预测": int(plan_total), "实际销量": int(actual_total),
         "发货(ETD)": int(ship_total), "预计到货": int(arr),
         "期末在仓": int(curr_inv), "期末在途": int(in_transit),
         "全口径库存": int(curr_inv + in_transit),
-        "DOH": doh, "备注": working_db.get("notes", {}).get(ds, "")
+        "DOH": doh, "备注": working_db.get("notes", {}).get(ds, ""),
+        **dept_row
     })
 
     curr_inv = max(0, curr_inv)
@@ -659,42 +698,76 @@ with tab_chart:
     st.markdown("---")
     st.markdown("### 📊 各部门供需分析")
 
-    # 构建各部门数据
-    all_dates = pd.date_range(start="2026-01-01", periods=12, freq='MS')
-    dept_data = {dept: {"月份": [], "发货": [], "预测": [], "实绩": []} for dept in DEPTS}
-
-    for d in all_dates:
-        m = d.strftime('%Y-%m')
-        for dept in DEPTS:
-            dept_data[dept]["月份"].append(m)
-            # 发货数据
-            ship_data = working_db.get("shipments", {}).get(m, {})
-            dept_data[dept]["发货"].append(ship_data.get(dept, 0) if isinstance(ship_data, dict) else 0)
-            # 预测数据
-            dept_data[dept]["预测"].append(working_db.get("dept_plans", {}).get(m, {}).get(dept, 0))
-            # 实绩数据
-            dept_data[dept]["实绩"].append(working_db.get("actual_sales", {}).get(m, {}).get(dept, 0))
-
     # 部门选择器
     selected_dept = st.selectbox("选择部门查看详细数据", DEPTS)
 
     # 绘制所选部门的图表
     if selected_dept:
-        dept_df = pd.DataFrame(dept_data[selected_dept])
+        # 从sim_df中提取该部门的数据
+        dept_cols = [col for col in sim_df.columns if col.startswith(selected_dept)]
+        if dept_cols:
+            dept_df = pd.DataFrame({
+                "月份": sim_df["月份"],
+                "发货": sim_df[f"{selected_dept}_发货"],
+                "预测": sim_df[f"{selected_dept}_预测"],
+                "实绩": sim_df[f"{selected_dept}_实绩"],
+                "到货": sim_df[f"{selected_dept}_到货"],
+                "库存": sim_df[f"{selected_dept}_库存"],
+                "DOH": sim_df[f"{selected_dept}_DOH"]
+            })
 
-        fig_dept = make_subplots(specs=[[{"secondary_y": False}]])
-        fig_dept.add_trace(go.Bar(x=dept_df["月份"], y=dept_df["发货"], name="发货",
-                                  marker_color='#3498DB', opacity=0.7), secondary_y=False)
-        fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=dept_df["预测"], name="预测",
-                                      line=dict(color='#BDC3C7', dash='dash')), secondary_y=False)
-        fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=dept_df["实绩"], name="实绩",
-                                      line=dict(color='black', width=3)), secondary_y=False)
+            # 绘制进销存图表
+            fig_dept = make_subplots(specs=[[{"secondary_y": True}]])
 
-        fig_dept.update_layout(title=f"{selected_dept} 供需分析", hovermode="x unified", height=400)
-        st.plotly_chart(fig_dept, use_container_width=True)
+            # 发货
+            fig_dept.add_trace(go.Bar(x=dept_df["月份"], y=dept_df["发货"], name="发货",
+                                      marker_color='#3498DB', opacity=0.7), secondary_y=False)
 
-        # 显示部门数据表格
-        st.dataframe(dept_df, use_container_width=True, hide_index=True)
+            # 预测
+            fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=dept_df["预测"], name="预测",
+                                          line=dict(color='#BDC3C7', dash='dash')), secondary_y=False)
+
+            # 实绩
+            fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=dept_df["实绩"], name="实绩",
+                                          line=dict(color='black', width=3)), secondary_y=False)
+
+            # 到货
+            fig_dept.add_trace(go.Bar(x=dept_df["月份"], y=dept_df["到货"], name="到货",
+                                      marker_color='#2ECC71', opacity=0.7), secondary_y=False)
+
+            # 库存
+            fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=dept_df["库存"], name="期末库存",
+                                          line=dict(color='#E74C3C', width=2)), secondary_y=False)
+
+            # DOH
+            doh_dept = dept_df["DOH"].clip(upper=max(target_doh * 3, 120))
+            fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=doh_dept, name="DOH(天)",
+                                          line=dict(color='#F1C40F', dash='dot')), secondary_y=True)
+
+            fig_dept.update_layout(title=f"{selected_dept} 进销存分析", hovermode="x unified", height=500)
+            fig_dept.update_yaxes(title_text="DOH (天)", secondary_y=True,
+                                  range=[0, max(target_doh * 3, 120)])
+            st.plotly_chart(fig_dept, use_container_width=True)
+
+            # 显示部门数据表格
+            styled_dept_df = dept_df.style \
+                .highlight_between(left=-9999, right=-1, subset=['库存'], color='#ffcccc') \
+                .map(lambda val: 'background-color: #d4edda' if val >= target_doh else ('background-color: #fff3cd' if val >= target_doh * 0.5 else 'background-color: #f8d7da'), subset=['DOH'])
+
+            st.dataframe(
+                styled_dept_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "月份": st.column_config.TextColumn("月份", width="small"),
+                    "DOH": st.column_config.NumberColumn("DOH", format="%.1f", width="small"),
+                    "库存": st.column_config.NumberColumn("期末库存", width="medium"),
+                    "到货": st.column_config.NumberColumn("到货", width="medium"),
+                    "发货": st.column_config.NumberColumn("发货", width="medium")
+                }
+            )
+        else:
+            st.warning(f"未找到{selected_dept}的数据")
 
 # -------- Tab 3: 审计日志 --------
 with tab_log:
