@@ -378,14 +378,17 @@ for row_idx_str, changes in st.session_state[delta_key].items():
                 working_db.setdefault("notes", {})[m] = str(val)
             else:
                 val = int(float(val)) if val not in [None, ""] else 0
+                dept = col.split("_")[0]
+
+                # 权限检查：部门用户只能编辑自己部门的数据
+                if not is_admin and dept != current_user:
+                    continue
+
                 if "_发货" in col and is_admin:
-                    dept = col.split("_")[0]
                     working_db.setdefault("shipments", {}).setdefault(m, {})[dept] = val
                 elif "_预测" in col:
-                    dept = col.split("_")[0]
                     working_db.setdefault("dept_plans", {}).setdefault(m, {})[dept] = val
                 elif "_实绩" in col:
-                    dept = col.split("_")[0]
                     working_db.setdefault("actual_sales", {}).setdefault(m, {})[dept] = val
         except (ValueError, TypeError, KeyError) as e:
             logger.warning(f"编辑应用异常 row={row_idx_str} col={col}: {e}")
@@ -698,8 +701,18 @@ with tab_chart:
     st.markdown("---")
     st.markdown("### 📊 各部门供需分析")
 
+    # 确定可查看的部门
+    if is_admin:
+        view_depts = DEPTS  # 管理员可看所有部门
+    else:
+        view_depts = [current_user]  # 部门用户只能看自己部门
+
     # 部门选择器
-    selected_dept = st.selectbox("选择部门查看详细数据", DEPTS)
+    if is_admin:
+        selected_dept = st.selectbox("选择部门查看详细数据", DEPTS)
+    else:
+        selected_dept = current_user
+        st.info(f"当前查看: {selected_dept}")
 
     # 绘制所选部门的图表
     if selected_dept:
