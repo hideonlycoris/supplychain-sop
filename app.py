@@ -635,6 +635,7 @@ with tab_chart:
         }
     )
 
+    # 汇总图表
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=sim_df["月份"], y=sim_df["计划预测"], name="汇总预测",
                              line=dict(color='#BDC3C7', dash='dash')), secondary_y=False)
@@ -649,10 +650,51 @@ with tab_chart:
     fig.add_trace(go.Scatter(x=sim_df["月份"], y=doh_display, name="DOH(天)",
                              line=dict(color='#F1C40F', dash='dot')), secondary_y=True)
 
-    fig.update_layout(title="2026 滚动供需分析（含预览数据）", hovermode="x unified", height=500)
+    fig.update_layout(title="2026 滚动供需分析（汇总）", hovermode="x unified", height=500)
     fig.update_yaxes(title_text="DOH (天)", secondary_y=True,
                      range=[0, max(target_doh * 3, 120)])
     st.plotly_chart(fig, use_container_width=True)
+
+    # 按部门分别显示
+    st.markdown("---")
+    st.markdown("### 📊 各部门供需分析")
+
+    # 构建各部门数据
+    all_dates = pd.date_range(start="2026-01-01", periods=12, freq='MS')
+    dept_data = {dept: {"月份": [], "发货": [], "预测": [], "实绩": []} for dept in DEPTS}
+
+    for d in all_dates:
+        m = d.strftime('%Y-%m')
+        for dept in DEPTS:
+            dept_data[dept]["月份"].append(m)
+            # 发货数据
+            ship_data = working_db.get("shipments", {}).get(m, {})
+            dept_data[dept]["发货"].append(ship_data.get(dept, 0) if isinstance(ship_data, dict) else 0)
+            # 预测数据
+            dept_data[dept]["预测"].append(working_db.get("dept_plans", {}).get(m, {}).get(dept, 0))
+            # 实绩数据
+            dept_data[dept]["实绩"].append(working_db.get("actual_sales", {}).get(m, {}).get(dept, 0))
+
+    # 部门选择器
+    selected_dept = st.selectbox("选择部门查看详细数据", DEPTS)
+
+    # 绘制所选部门的图表
+    if selected_dept:
+        dept_df = pd.DataFrame(dept_data[selected_dept])
+
+        fig_dept = make_subplots(specs=[[{"secondary_y": False}]])
+        fig_dept.add_trace(go.Bar(x=dept_df["月份"], y=dept_df["发货"], name="发货",
+                                  marker_color='#3498DB', opacity=0.7), secondary_y=False)
+        fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=dept_df["预测"], name="预测",
+                                      line=dict(color='#BDC3C7', dash='dash')), secondary_y=False)
+        fig_dept.add_trace(go.Scatter(x=dept_df["月份"], y=dept_df["实绩"], name="实绩",
+                                      line=dict(color='black', width=3)), secondary_y=False)
+
+        fig_dept.update_layout(title=f"{selected_dept} 供需分析", hovermode="x unified", height=400)
+        st.plotly_chart(fig_dept, use_container_width=True)
+
+        # 显示部门数据表格
+        st.dataframe(dept_df, use_container_width=True, hide_index=True)
 
 # -------- Tab 3: 审计日志 --------
 with tab_log:
