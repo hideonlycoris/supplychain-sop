@@ -30,7 +30,7 @@ def get_risk_label(risk_level: str) -> str:
     return labels.get(risk_level, '⚪ 未知')
 
 
-def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
+def calculate_sku_metrics(sku_name: str, sku_data: dict, current_user: str = None, is_admin: bool = True) -> dict:
     """
     计算单个SKU的关键指标 - 使用与app.py相同的模拟逻辑
     """
@@ -62,14 +62,25 @@ def calculate_sku_metrics(sku_name: str, sku_data: dict) -> dict:
 
     for i, d in enumerate(f_dates):
         ds = d.strftime('%Y-%m')
-        actual_total = sum(actual_sales.get(ds, {}).values())
-        plan_total = sum(dept_plans.get(ds, {}).values())
+
+        # 根据权限计算需求数据
+        if is_admin:
+            actual_total = sum(actual_sales.get(ds, {}).values())
+            plan_total = sum(dept_plans.get(ds, {}).values())
+        else:
+            # 部门用户只计算自己部门的数据
+            actual_total = actual_sales.get(ds, {}).get(current_user, 0)
+            plan_total = dept_plans.get(ds, {}).get(current_user, 0)
 
         if i >= lt_months:
             ship_month = f_dates[i - lt_months].strftime('%Y-%m')
             # 兼容新旧格式：如果是字典则求和，如果是数值则直接使用
             ship_data = shipments.get(ship_month, 0)
-            arr = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
+            if is_admin:
+                arr = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
+            else:
+                # 部门用户只计算自己部门的到货
+                arr = ship_data.get(current_user, 0) if isinstance(ship_data, dict) else 0
         else:
             arr = 0
 
@@ -510,12 +521,35 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
 
     # 加载各SKU详情页的AI分析结果
     diagnosis_cache = load_diagnosis_cache(supabase_client)
-    print(f"[AI DEBUG] 首页加载到 {len(diagnosis_cache)} 个SKU的AI分析缓存: {list(diagnosis_cache.keys())}")
+
+    # 根据权限过滤SKU数据
+    filtered_db = {}
+    if is_admin:
+        # 管理员可以看到所有SKU
+        filtered_db = full_db
+    else:
+        # 部门用户只能看到有该部门数据的SKU
+        for sku_name, sku_data in full_db.items():
+            dept_plans = sku_data.get("dept_plans", {})
+            actual_sales = sku_data.get("actual_sales", {})
+            # 检查该SKU是否有当前部门的计划或实绩数据
+            has_dept_data = False
+            for month_data in dept_plans.values():
+                if current_user in month_data and month_data[current_user] > 0:
+                    has_dept_data = True
+                    break
+            if not has_dept_data:
+                for month_data in actual_sales.values():
+                    if current_user in month_data and month_data[current_user] > 0:
+                        has_dept_data = True
+                        break
+            if has_dept_data:
+                filtered_db[sku_name] = sku_data
 
     # 构建总表数据
     overview_data = []
-    for sku_name, sku_data in full_db.items():
-        metrics = calculate_sku_metrics(sku_name, sku_data)
+    for sku_name, sku_data in filtered_db.items():
+        metrics = calculate_sku_metrics(sku_name, sku_data, current_user, is_admin)
 
         # 获取该SKU的AI分析摘要
         diagnosis = diagnosis_cache.get(sku_name, {})
