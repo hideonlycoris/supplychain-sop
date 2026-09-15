@@ -389,10 +389,14 @@ if is_admin:
     else:
         st.sidebar.success("✅ 各部门期初库存总计与总期初库存一致")
 
-    # 保存按钮
+    # 保存按钮 - 直接保存到数据库
     if st.sidebar.button("💾 保存各部门期初库存设置", type="primary"):
         working_db["config"]["dept_init_inv"] = dept_init_inputs
-        st.sidebar.success("✅ 已保存到本地，请点击页面底部「确认保存并同步」按钮生效")
+        # 立即保存到数据库
+        full_db[sku_key] = working_db
+        save_sku_data(sku_key, working_db, current_user)
+        st.sidebar.success("✅ 已保存到数据库！")
+        st.rerun()
 
 # 处理AgGrid的编辑数据
 if 'edited_df' in locals() and edited_df is not None:
