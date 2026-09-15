@@ -513,110 +513,117 @@ if is_admin:
 # 7. 模拟计算
 # ============================================================
 sim_res = []
-curr_inv = int(working_db["config"]["init_inv"])
-cumulative_plan = 0
-cumulative_actual = 0
 current_month = int(today_str.split('-')[1])  # 当前月份
+
+# 获取各部门的期初库存
+dept_init_inv = working_db["config"].get("dept_init_inv", {})
+if not dept_init_inv:
+    # 如果没有分部门期初库存，按比例分配
+    total_init = int(working_db["config"]["init_inv"])
+    dept_init_inv = {dept: total_init // len(DEPTS) for dept in DEPTS}
+
+# 初始化各部门的库存和在途
+dept_sim_inv = {dept: float(dept_init_inv.get(dept, 0)) for dept in DEPTS}
+dept_arrival_queue = {dept: [0.0] * 36 for dept in DEPTS}
 
 for i, d in enumerate(f_dates):
     ds = d.strftime('%Y-%m')
+
+    # 汇总数据（用于显示）
     actual_total = sum(working_db.get("actual_sales", {}).get(ds, {}).values())
     plan_total = sum(working_db["dept_plans"].get(ds, {}).values())
 
+    # 计算汇总到货
     if i >= lt_months:
         ship_month = f_dates[i - lt_months].strftime('%Y-%m')
-        # 兼容新旧格式：如果是字典则求和，如果是数值则直接使用
         ship_data = working_db["shipments"].get(ship_month, 0)
-        arr = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
+        arr_total = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
     else:
-        arr = 0
+        arr_total = 0
 
-    if ds < today_str:
-        # 过去月份：使用实际销量
-        demand_to_use = actual_total
-        cumulative_plan += plan_total
-        cumulative_actual += actual_total
-    elif ds == today_str:
-        # 当前月份：如果有实际销量用实际，否则用计划
-        if actual_total > 0:
-            demand_to_use = actual_total
+    # 构建各部门数据（根据权限限制）
+    dept_row = {}
+    view_depts = DEPTS if is_admin else [current_user]
+
+    for dept in view_depts:
+        # 该部门的发货数据
+        dept_ship = working_db.get("shipments", {}).get(ds, {}).get(dept, 0) if isinstance(working_db.get("shipments", {}).get(ds, 0), dict) else 0
+        # 该部门的预测数据
+        dept_plan = working_db.get("dept_plans", {}).get(ds, {}).get(dept, 0)
+        # 该部门的实绩数据
+        dept_actual = working_db.get("actual_sales", {}).get(ds, {}).get(dept, 0)
+
+        # 该部门的到货（从到货队列获取）
+        dept_arr = dept_arrival_queue[dept][i] if i < 36 else 0
+
+        # 计算该部门的库存
+        if ds < today_str:
+            # 过去月份：使用实际销量
+            dept_demand = dept_actual
+        elif ds == today_str:
+            # 当前月份：如果有实际销量用实际，否则用计划
+            dept_demand = dept_actual if dept_actual > 0 else dept_plan
         else:
-            demand_to_use = plan_total
-        cumulative_plan = 0
-        cumulative_actual = 0
-    else:
-        # 未来月份：直接使用计划预测
-        demand_to_use = plan_total
+            # 未来月份：使用计划
+            dept_demand = dept_plan
 
-    curr_inv = curr_inv + arr - demand_to_use
+        # 更新库存
+        dept_sim_inv[dept] = dept_sim_inv[dept] + dept_arr - dept_demand
+        dept_sim_inv[dept] = max(0, dept_sim_inv[dept])
 
-    in_transit = sum([
+        # 计算在途库存
+        dept_in_transit = sum([
+            dept_arrival_queue[dept][i - j] if (i - j >= 0 and i - j < 36) else 0
+            for j in range(lt_months)
+        ])
+
+        # 计算DOH
+        dept_next_dem = working_db.get("dept_plans", {}).get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).get(dept, 0)
+        if dept_next_dem > 0:
+            dept_doh = round(dept_sim_inv[dept] / (dept_next_dem / 30), 1)
+        else:
+            dept_doh = 999.0 if dept_sim_inv[dept] > 0 else 0.0
+
+        dept_row[f"{dept}_发货"] = dept_ship
+        dept_row[f"{dept}_预测"] = dept_plan
+        dept_row[f"{dept}_实绩"] = dept_actual
+        dept_row[f"{dept}_到货"] = int(dept_arr)
+        dept_row[f"{dept}_库存"] = int(dept_sim_inv[dept])
+        dept_row[f"{dept}_在途"] = int(dept_in_transit)
+        dept_row[f"{dept}_DOH"] = dept_doh
+
+        # 将该部门的发货加入到货队列
+        if i + lt_months < 36:
+            dept_arrival_queue[dept][i + lt_months] += dept_ship
+
+    # 计算汇总在途
+    in_transit_total = sum([
         sum(working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), {}).values())
         if isinstance(working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), 0), dict)
         else working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), 0)
         for j in range(lt_months) if i - j >= 0
     ])
 
-    next_dem = sum(working_db["dept_plans"].get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).values())
-    if next_dem > 0:
-        effective_inv = max(0, curr_inv)
-        doh = round(effective_inv / (next_dem / 30), 1)
+    # 计算汇总DOH
+    next_dem_total = sum(working_db["dept_plans"].get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).values())
+    curr_inv_total = sum(dept_sim_inv.values())
+    if next_dem_total > 0:
+        doh_total = round(curr_inv_total / (next_dem_total / 30), 1)
     else:
-        doh = 999.0 if curr_inv > 0 else 0.0
+        doh_total = 999.0 if curr_inv_total > 0 else 0.0
 
     # 兼容新旧格式计算发货总量
     ship_data = working_db["shipments"].get(ds, 0)
     ship_total = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
 
-    # 构建各部门数据（根据权限限制）
-    dept_row = {}
-    view_depts = DEPTS if is_admin else [current_user]
-    for dept in view_depts:
-        # 该部门的发货数据
-        dept_ship = ship_data.get(dept, 0) if isinstance(ship_data, dict) else 0
-        # 该部门的预测数据
-        dept_plan = working_db.get("dept_plans", {}).get(ds, {}).get(dept, 0)
-        # 该部门的实绩数据
-        dept_actual = working_db.get("actual_sales", {}).get(ds, {}).get(dept, 0)
-
-        # 计算该部门的预计到货（按比例分配）
-        if ship_total > 0:
-            dept_ratio = dept_ship / ship_total
-        else:
-            dept_ratio = 1.0 / len(DEPTS) if len(DEPTS) > 0 else 0
-        dept_arr = int(arr * dept_ratio)
-
-        # 计算该部门的期末库存（简化计算：按比例分配）
-        if curr_inv > 0 or in_transit > 0:
-            total_inv = curr_inv + in_transit
-            dept_inv = int(total_inv * dept_ratio)
-        else:
-            dept_inv = 0
-
-        # 计算该部门的DOH
-        dept_next_dem = working_db.get("dept_plans", {}).get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).get(dept, 0)
-        if dept_next_dem > 0:
-            dept_doh = round(dept_inv / (dept_next_dem / 30), 1)
-        else:
-            dept_doh = 999.0 if dept_inv > 0 else 0.0
-
-        dept_row[f"{dept}_发货"] = dept_ship
-        dept_row[f"{dept}_预测"] = dept_plan
-        dept_row[f"{dept}_实绩"] = dept_actual
-        dept_row[f"{dept}_到货"] = dept_arr
-        dept_row[f"{dept}_库存"] = dept_inv
-        dept_row[f"{dept}_DOH"] = dept_doh
-
     sim_res.append({
         "月份": ds, "计划预测": int(plan_total), "实际销量": int(actual_total),
-        "发货(ETD)": int(ship_total), "预计到货": int(arr),
-        "期末在仓": int(curr_inv), "期末在途": int(in_transit),
-        "全口径库存": int(curr_inv + in_transit),
-        "DOH": doh, "备注": working_db.get("notes", {}).get(ds, ""),
+        "发货(ETD)": int(ship_total), "预计到货": int(arr_total),
+        "期末在仓": int(curr_inv_total), "期末在途": int(in_transit_total),
+        "全口径库存": int(curr_inv_total + in_transit_total),
+        "DOH": doh_total, "备注": working_db.get("notes", {}).get(ds, ""),
         **dept_row
     })
-
-    curr_inv = max(0, curr_inv)
 
 sim_df = pd.DataFrame(sim_res)
 
