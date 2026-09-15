@@ -351,6 +351,39 @@ target_doh = st.sidebar.number_input("目标在仓备货周转(DOH)", value=int(
 lt_months = st.sidebar.number_input("物流时效 (月)", value=int(db["config"].get("lt", 2)), min_value=1, disabled=not is_admin)
 frozen_m = st.sidebar.slider("生产锁定窗口 (月)", 0, 6, int(db["config"].get("frozen_months", 2)), disabled=not is_admin)
 
+# 分部门后重新计算期初库存
+if is_admin:
+    st.sidebar.divider()
+    st.sidebar.subheader("📊 分部门库存重算")
+    st.sidebar.info("分部门后，7月之前的库存需要按部门比例重新分配")
+    if st.sidebar.button("🔄 重新计算各部门期初库存", type="secondary"):
+        # 计算各部门在1-6月的发货占比
+        total_ship_jan_jun = {}
+        for month in ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06']:
+            ship_data = working_db.get("shipments", {}).get(month, {})
+            if isinstance(ship_data, dict):
+                for dept, val in ship_data.items():
+                    total_ship_jan_jun[dept] = total_ship_jan_jun.get(dept, 0) + val
+
+        total_all = sum(total_ship_jan_jun.values())
+        if total_all > 0:
+            # 按发货占比分配期初库存
+            dept_init_inv = {}
+            for dept in DEPTS:
+                ratio = total_ship_jan_jun.get(dept, 0) / total_all
+                dept_init_inv[dept] = int(init_inv * ratio)
+
+            # 显示计算结果
+            st.sidebar.write("各部门期初库存分配：")
+            for dept, inv in dept_init_inv.items():
+                st.sidebar.write(f"  {dept}: {inv}")
+
+            # 保存到config
+            working_db["config"]["dept_init_inv"] = dept_init_inv
+            st.sidebar.success("已计算，点击保存按钮生效")
+        else:
+            st.sidebar.warning("1-6月无发货数据，无法按比例分配")
+
 # ============================================================
 # 5. 隔离推演逻辑 (Working DB)
 # ============================================================
@@ -625,6 +658,18 @@ with tab_edit:
             row[f"{dept}_预测"] = working_db.get("dept_plans", {}).get(m, {}).get(dept, 0)
             row[f"{dept}_实绩"] = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
         edit_data.append(row)
+
+    # 使用CSS固定首列
+    st.markdown("""
+    <style>
+    [data-testid="stDataFrame"] div[role="grid"] > div:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 10;
+        background: white;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     st.data_editor(
         pd.DataFrame(edit_data),
