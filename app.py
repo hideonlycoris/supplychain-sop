@@ -660,10 +660,13 @@ tab_edit, tab_chart, tab_log, tab_ai = st.tabs(["📝 计划录入与备注", "�
 
 # -------- Tab 1: 计划录入 --------
 with tab_edit:
+    # 构建可编辑数据（不含月份列）
     edit_data = []
+    month_list = []
     for i, r in sim_df.iterrows():
         m = r["月份"]
-        row = {"月份": m, "备注": r["备注"]}
+        month_list.append(m)
+        row = {"备注": r["备注"]}
         target_depts = DEPTS if is_admin else [current_user]
         # 发货数据按部门分开
         for dept in target_depts:
@@ -672,28 +675,24 @@ with tab_edit:
             row[f"{dept}_实绩"] = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
         edit_data.append(row)
 
-    # 使用CSS固定首列
-    st.markdown("""
-    <style>
-    [data-testid="stDataFrame"] div[role="grid"] > div:first-child {
-        position: sticky;
-        left: 0;
-        z-index: 10;
-        background: white;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # 使用两列布局：左侧固定月份，右侧可滚动
+    col_month, col_data = st.columns([1, 4])
 
-    st.data_editor(
-        pd.DataFrame(edit_data),
-        use_container_width=True,
-        hide_index=True,
-        key=editor_key,
-        column_config={
-            "备注": st.column_config.TextColumn("📝 决策备注", width="large"),
-            "月份": st.column_config.TextColumn("月份", width="small")
-        }
-    )
+    with col_month:
+        st.markdown("**月份**")
+        for m in month_list:
+            st.markdown(f"<div style='padding: 8px 0; border-bottom: 1px solid #e0e0e0;'>{m}</div>", unsafe_allow_html=True)
+
+    with col_data:
+        st.data_editor(
+            pd.DataFrame(edit_data),
+            use_container_width=True,
+            hide_index=True,
+            key=editor_key,
+            column_config={
+                "备注": st.column_config.TextColumn("📝 决策备注", width="large")
+            }
+        )
 
     col_save1, col_save2 = st.columns([1, 4])
     if col_save1.button("💾 确认保存并同步", type="primary"):
