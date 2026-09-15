@@ -360,10 +360,16 @@ if is_admin:
         # 计算各部门在1-6月的发货占比
         total_ship_jan_jun = {}
         for month in ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06']:
-            ship_data = working_db.get("shipments", {}).get(month, {})
+            ship_data = working_db.get("shipments", {}).get(month, 0)
+            # 兼容新旧格式
             if isinstance(ship_data, dict):
                 for dept, val in ship_data.items():
                     total_ship_jan_jun[dept] = total_ship_jan_jun.get(dept, 0) + val
+            elif isinstance(ship_data, (int, float)) and ship_data > 0:
+                # 旧格式，平均分配到各部门
+                per_dept = ship_data / len(DEPTS) if len(DEPTS) > 0 else 0
+                for dept in DEPTS:
+                    total_ship_jan_jun[dept] = total_ship_jan_jun.get(dept, 0) + per_dept
 
         total_all = sum(total_ship_jan_jun.values())
         if total_all > 0:
