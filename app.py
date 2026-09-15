@@ -688,21 +688,16 @@ with tab_edit:
 
     edit_df = pd.DataFrame(edit_data)
 
-    # 使用AgGrid实现固定首列
+    # 使用AgGrid实现固定首列，自适应列宽
     gb = GridOptionsBuilder.from_dataframe(edit_df)
-    gb.configure_default_column(editable=True, filter=True, sortable=True)
+    gb.configure_default_column(editable=True, filter=True, sortable=True, resizable=True)
 
     # 固定月份列
-    gb.configure_column("月份", pinned="left", editable=False, width=100)
+    gb.configure_column("月份", pinned="left", editable=False, width=90)
     gb.configure_column("备注", width=200)
 
-    # 配置其他列
-    for col in edit_df.columns:
-        if col not in ["月份", "备注"]:
-            gb.configure_column(col, width=120)
-
     gb.configure_selection(selection_mode="multiple", use_checkbox=False)
-    gb.configure_grid_options(domLayout="autoHeight")
+    gb.configure_grid_options(domLayout="autoHeight", autoSizeStrategy={"type": "fitGridColumnContents"})
 
     grid_options = gb.build()
 
@@ -764,13 +759,13 @@ with tab_chart:
             return 'background-color: #fff3cd'
         return 'background-color: #d4edda'
 
-    # 使用AgGrid固定月份列
+    # 使用AgGrid固定月份列，自适应列宽
     gb_chart = GridOptionsBuilder.from_dataframe(sim_df)
-    gb_chart.configure_default_column(filter=True, sortable=True)
-    gb_chart.configure_column("月份", pinned="left", editable=False, width=100)
-    gb_chart.configure_column("备注", width=200)
-    gb_chart.configure_column("DOH", width=80)
-    gb_chart.configure_grid_options(domLayout="autoHeight")
+    gb_chart.configure_default_column(filter=True, sortable=True, resizable=True)
+    gb_chart.configure_column("月份", pinned="left", editable=False, width=90)
+    gb_chart.configure_column("备注", width=250)
+    gb_chart.configure_column("DOH", width=70)
+    gb_chart.configure_grid_options(domLayout="autoHeight", autoSizeStrategy={"type": "fitGridColumnContents"})
 
     chart_grid_options = gb_chart.build()
 
