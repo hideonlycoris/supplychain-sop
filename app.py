@@ -660,6 +660,9 @@ tab_edit, tab_chart, tab_log, tab_ai = st.tabs(["📝 计划录入与备注", "�
 
 # -------- Tab 1: 计划录入 --------
 with tab_edit:
+    # 提示用户
+    st.info("💡 提示：表格可以左右滚动，月份列在最左侧。编辑后点击「确认保存并同步」按钮保存。")
+
     edit_data = []
     for i, r in sim_df.iterrows():
         m = r["月份"]
@@ -672,7 +675,6 @@ with tab_edit:
             row[f"{dept}_实绩"] = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
         edit_data.append(row)
 
-    # 使用普通data_editor，月份列包含在内
     st.data_editor(
         pd.DataFrame(edit_data),
         use_container_width=True,
