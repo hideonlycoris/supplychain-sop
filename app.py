@@ -339,9 +339,6 @@ for field in ["notes", "actual_sales"]:
         db[field] = {}
 
 editor_key = f"plan_editor_{sku_key}"
-delta_key = f"plan_deltas_{sku_key}"
-if delta_key not in st.session_state:
-    st.session_state[delta_key] = {}
 
 # 侧边栏参数
 st.sidebar.divider()
@@ -396,40 +393,6 @@ if is_admin:
     if st.sidebar.button("💾 保存各部门期初库存设置", type="primary"):
         working_db["config"]["dept_init_inv"] = dept_init_inputs
         st.sidebar.success("✅ 已保存到本地，请点击页面底部「确认保存并同步」按钮生效")
-
-# 合并编辑器增量到 working_db
-if editor_key in st.session_state:
-    curr_edits = st.session_state[editor_key].get('edited_rows', {})
-    for row_idx_str, changes in curr_edits.items():
-        if row_idx_str not in st.session_state[delta_key]:
-            st.session_state[delta_key][row_idx_str] = {}
-        st.session_state[delta_key][row_idx_str].update(changes)
-
-for row_idx_str, changes in st.session_state[delta_key].items():
-    row_idx = int(row_idx_str)
-    if row_idx >= len(f_dates):
-        continue
-    m = f_dates[row_idx].strftime('%Y-%m')
-    for col, val in changes.items():
-        try:
-            if col == "备注":
-                working_db.setdefault("notes", {})[m] = str(val)
-            else:
-                val = int(float(val)) if val not in [None, ""] else 0
-                dept = col.split("_")[0]
-
-                # 权限检查：部门用户只能编辑自己部门的数据
-                if not is_admin and dept != current_user:
-                    continue
-
-                if "_发货" in col and is_admin:
-                    working_db.setdefault("shipments", {}).setdefault(m, {})[dept] = val
-                elif "_预测" in col:
-                    working_db.setdefault("dept_plans", {}).setdefault(m, {})[dept] = val
-                elif "_实绩" in col:
-                    working_db.setdefault("actual_sales", {}).setdefault(m, {})[dept] = val
-        except (ValueError, TypeError, KeyError) as e:
-            logger.warning(f"编辑应用异常 row={row_idx_str} col={col}: {e}")
 
 # 处理AgGrid的编辑数据
 if 'edited_df' in locals() and edited_df is not None:
@@ -535,8 +498,6 @@ if is_admin:
         full_db[sku_key] = working_db
         save_sku_data(sku_key, working_db, current_user)
         write_log(current_user, sku_key, "执行AI自动补货推演")
-        if delta_key in st.session_state:
-            del st.session_state[delta_key]
         st.success("推演成功并已同步到云端！")
         st.rerun()
 
@@ -679,13 +640,9 @@ sim_df = pd.DataFrame(sim_res)
 # ============================================================
 st.title(f"🚢 {target_sku} 2026 滚动决策台")
 
-has_unsaved = bool(st.session_state[delta_key])
 st_col1, st_col2, st_col3 = st.columns([2, 1, 1])
 st_col1.markdown(f"**当前用户:** {current_user} {'`(管理员)`' if is_admin else ''}")
-if has_unsaved:
-    st_col2.warning("⚠️ 有未保存的修改")
-else:
-    st_col2.success("✅ 数据已同步")
+st_col2.success("✅ 数据已同步")
 st_col3.markdown(f"**SKU:** `{target_sku}`")
 
 c1, c2, c3, c4 = st.columns(4)
@@ -781,13 +738,9 @@ with tab_edit:
 
         full_db[sku_key] = working_db
         save_sku_data(sku_key, working_db, current_user)
-        if delta_key in st.session_state:
-            del st.session_state[delta_key]
         st.success("✅ 同步成功！请切换到「供需分析图」查看更新后的数据。")
         st.rerun()
     if col_save2.button("🚫 放弃当前修改"):
-        if delta_key in st.session_state:
-            del st.session_state[delta_key]
         st.rerun()
 
     # 提示信息
