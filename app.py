@@ -656,15 +656,6 @@ c4.metric("周转率(ITO)", f"{round(float(ito), 2)} 次/年")
 
 tab_edit, tab_chart, tab_log, tab_ai = st.tabs(["📝 计划录入与备注", "📈 供需分析图", "📜 审计日志", "🧠 AI 智能诊断"])
 
-# 显示当前各部门期初库存设置
-with tab_edit:
-    st.info("💡 **期初库存设置**：请在左侧边栏「各部门期初库存设置」中输入各部门的期初库存数量，然后点击保存按钮生效。")
-    st.write("**当前各部门期初库存设置：**")
-    for dept in DEPTS:
-        st.write(f"- {dept}: {dept_init_inv.get(dept, 0)} PCS")
-    st.write(f"- **总计**: {sum(dept_init_inv.values())} PCS / 总期初库存: {init_inv} PCS")
-    st.markdown("---")
-
 # -------- Tab 1: 计划录入 --------
 with tab_edit:
     edit_data = []
