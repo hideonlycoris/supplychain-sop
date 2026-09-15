@@ -601,11 +601,23 @@ for i, d in enumerate(f_dates):
         dept_sim_inv[dept] = dept_sim_inv[dept] + dept_arr - dept_demand
         dept_sim_inv[dept] = max(0, dept_sim_inv[dept])
 
-        # 计算在途库存
-        dept_in_transit = sum([
-            dept_arrival_queue[dept][i - j] if (i - j >= 0 and i - j < 36) else 0
-            for j in range(lt_months)
-        ])
+        # 计算在途库存（已发货但未到货的数量）
+        # 在途 = 过去lt_months个月内发出的、但还未到货的货物
+        dept_in_transit = 0
+        for j in range(1, lt_months + 1):
+            # 检查j个月前发出的货物是否已经到货
+            ship_month_idx = i - j
+            if ship_month_idx >= 0 and ship_month_idx < 36:
+                # j个月前发出的货物，在当前月份是否已经到货？
+                # 如果 j < lt_months，说明还没到货，算在途
+                if j < lt_months:
+                    ship_month_str = f_dates[ship_month_idx].strftime('%Y-%m')
+                    ship_data = working_db.get("shipments", {}).get(ship_month_str, {})
+                    if isinstance(ship_data, dict):
+                        dept_in_transit += ship_data.get(dept, 0)
+                    else:
+                        # 旧格式，按比例分配
+                        dept_in_transit += ship_data / len(DEPTS) if len(DEPTS) > 0 else 0
 
         # 计算DOH
         dept_next_dem = working_db.get("dept_plans", {}).get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).get(dept, 0)
@@ -626,13 +638,18 @@ for i, d in enumerate(f_dates):
         if i + lt_months < 36:
             dept_arrival_queue[dept][i + lt_months] += dept_ship
 
-    # 计算汇总在途
-    in_transit_total = sum([
-        sum(working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), {}).values())
-        if isinstance(working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), 0), dict)
-        else working_db["shipments"].get(f_dates[i - j].strftime('%Y-%m'), 0)
-        for j in range(lt_months) if i - j >= 0
-    ])
+    # 计算汇总在途（已发货但未到货的数量）
+    in_transit_total = 0
+    for j in range(1, lt_months + 1):
+        ship_month_idx = i - j
+        if ship_month_idx >= 0 and ship_month_idx < 36:
+            if j < lt_months:
+                ship_month_str = f_dates[ship_month_idx].strftime('%Y-%m')
+                ship_data = working_db["shipments"].get(ship_month_str, {})
+                if isinstance(ship_data, dict):
+                    in_transit_total += sum(ship_data.values())
+                else:
+                    in_transit_total += ship_data
 
     # 计算汇总DOH
     next_dem_total = sum(working_db["dept_plans"].get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).values())
