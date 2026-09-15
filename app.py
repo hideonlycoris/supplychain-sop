@@ -351,7 +351,15 @@ target_doh = st.sidebar.number_input("目标在仓备货周转(DOH)", value=int(
 lt_months = st.sidebar.number_input("物流时效 (月)", value=int(db["config"].get("lt", 2)), min_value=1, disabled=not is_admin)
 frozen_m = st.sidebar.slider("生产锁定窗口 (月)", 0, 6, int(db["config"].get("frozen_months", 2)), disabled=not is_admin)
 
-# 分部门后重新计算期初库存
+# ============================================================
+# 5. 隔离推演逻辑 (Working DB)
+# ============================================================
+working_db = copy.deepcopy(db)
+start_date = datetime(2026, 1, 1)
+f_dates = pd.date_range(start=start_date, periods=12, freq='MS')
+today_str = datetime.now().strftime('%Y-%m')
+
+# 分部门后重新计算期初库存（移到working_db定义之后）
 if is_admin:
     st.sidebar.divider()
     st.sidebar.subheader("📊 分部门库存重算")
@@ -389,14 +397,6 @@ if is_admin:
             st.sidebar.success("已计算，点击保存按钮生效")
         else:
             st.sidebar.warning("1-6月无发货数据，无法按比例分配")
-
-# ============================================================
-# 5. 隔离推演逻辑 (Working DB)
-# ============================================================
-working_db = copy.deepcopy(db)
-start_date = datetime(2026, 1, 1)
-f_dates = pd.date_range(start=start_date, periods=12, freq='MS')
-today_str = datetime.now().strftime('%Y-%m')
 
 # 合并编辑器增量到 working_db
 if editor_key in st.session_state:
