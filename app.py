@@ -815,17 +815,21 @@ with tab_chart:
     else:
         view_depts = [current_user]  # 部门用户只能看自己部门
 
-    # 部门选择器 - 只显示有数据的部门
+    # 部门选择器 - 只显示sim_df中存在的部门
     if is_admin:
-        # 检测有数据的部门
+        # 检测sim_df中存在且有数据的部门
         active_depts_for_select = []
         for dept in DEPTS:
-            dept_total = sim_df[f"{dept}_发货"].sum() + sim_df[f"{dept}_预测"].sum() + sim_df[f"{dept}_实绩"].sum()
-            if dept_total > 0:
-                active_depts_for_select.append(dept)
+            ship_col = f"{dept}_发货"
+            if ship_col in sim_df.columns:
+                dept_total = sim_df[ship_col].sum() + sim_df[f"{dept}_预测"].sum() + sim_df[f"{dept}_实绩"].sum()
+                if dept_total > 0:
+                    active_depts_for_select.append(dept)
+        # 如果没有有数据的部门，显示sim_df中存在的部门
         if not active_depts_for_select:
-            active_depts_for_select = DEPTS
-        selected_dept = st.selectbox("选择部门查看详细数据", active_depts_for_select)
+            active_depts_for_select = [col.split('_')[0] for col in sim_df.columns if col.endswith('_发货')]
+            active_depts_for_select = list(dict.fromkeys(active_depts_for_select))  # 去重保持顺序
+        selected_dept = st.selectbox("选择部门查看详细数据", active_depts_for_select) if active_depts_for_select else None
     else:
         selected_dept = current_user
         st.info(f"当前查看: {selected_dept}")
