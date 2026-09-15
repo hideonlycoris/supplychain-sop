@@ -363,41 +363,39 @@ today_str = datetime.now().strftime('%Y-%m')
 # 分部门后重新计算期初库存（移到working_db定义之后）
 if is_admin:
     st.sidebar.divider()
-    st.sidebar.subheader("📊 分部门库存重算")
-    st.sidebar.info("分部门后，7月之前的库存需要按部门比例重新分配")
-    if st.sidebar.button("🔄 重新计算各部门期初库存", type="secondary"):
-        # 计算各部门在1-6月的发货占比
-        total_ship_jan_jun = {}
-        for month in ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06']:
-            ship_data = working_db.get("shipments", {}).get(month, 0)
-            # 兼容新旧格式
-            if isinstance(ship_data, dict):
-                for dept, val in ship_data.items():
-                    total_ship_jan_jun[dept] = total_ship_jan_jun.get(dept, 0) + val
-            elif isinstance(ship_data, (int, float)) and ship_data > 0:
-                # 旧格式，平均分配到各部门
-                per_dept = ship_data / len(DEPTS) if len(DEPTS) > 0 else 0
-                for dept in DEPTS:
-                    total_ship_jan_jun[dept] = total_ship_jan_jun.get(dept, 0) + per_dept
+    st.sidebar.subheader("📊 各部门期初库存设置")
+    st.sidebar.info("请手动输入各部门的期初库存数量（2026年7月）")
 
-        total_all = sum(total_ship_jan_jun.values())
-        if total_all > 0:
-            # 按发货占比分配期初库存
-            dept_init_inv = {}
-            for dept in DEPTS:
-                ratio = total_ship_jan_jun.get(dept, 0) / total_all
-                dept_init_inv[dept] = int(init_inv * ratio)
+    # 获取当前各部门期初库存
+    dept_init_inv = working_db["config"].get("dept_init_inv", {})
 
-            # 显示计算结果
-            st.sidebar.write("各部门期初库存分配：")
-            for dept, inv in dept_init_inv.items():
-                st.sidebar.write(f"  {dept}: {inv}")
+    # 为每个部门创建输入框
+    dept_init_inputs = {}
+    for dept in DEPTS:
+        current_val = dept_init_inv.get(dept, 0)
+        dept_init_inputs[dept] = st.sidebar.number_input(
+            f"{dept} 期初库存",
+            min_value=0,
+            value=current_val,
+            step=100,
+            key=f"dept_init_{dept}"
+        )
 
-            # 保存到config
-            working_db["config"]["dept_init_inv"] = dept_init_inv
-            st.sidebar.success("已计算，点击保存按钮生效")
-        else:
-            st.sidebar.warning("1-6月无发货数据，无法按比例分配")
+    # 显示总计
+    total_dept_init = sum(dept_init_inputs.values())
+    st.sidebar.write(f"**各部门期初库存总计: {total_dept_init}**")
+    st.sidebar.write(f"**总期初库存: {init_inv}**")
+
+    # 检查是否一致
+    if total_dept_init != init_inv:
+        st.sidebar.warning(f"⚠️ 各部门期初库存总计({total_dept_init})与总期初库存({init_inv})不一致")
+    else:
+        st.sidebar.success("✅ 各部门期初库存总计与总期初库存一致")
+
+    # 保存按钮
+    if st.sidebar.button("💾 保存各部门期初库存设置", type="primary"):
+        working_db["config"]["dept_init_inv"] = dept_init_inputs
+        st.sidebar.success("✅ 已保存到本地，请点击页面底部「确认保存并同步」按钮生效")
 
 # 合并编辑器增量到 working_db
 if editor_key in st.session_state:
@@ -551,9 +549,8 @@ current_month = int(today_str.split('-')[1])  # 当前月份
 # 获取各部门的期初库存
 dept_init_inv = working_db["config"].get("dept_init_inv", {})
 if not dept_init_inv:
-    # 如果没有分部门期初库存，按比例分配
-    total_init = int(working_db["config"]["init_inv"])
-    dept_init_inv = {dept: total_init // len(DEPTS) for dept in DEPTS}
+    # 如果没有分部门期初库存，使用0（需要用户手动设置）
+    dept_init_inv = {dept: 0 for dept in DEPTS}
 
 # 初始化各部门的库存和在途
 dept_sim_inv = {dept: float(dept_init_inv.get(dept, 0)) for dept in DEPTS}
@@ -684,6 +681,15 @@ c3.metric("预估平均在仓周转", f"{365 / ito if ito > 0 else 0:.1f} 天")
 c4.metric("周转率(ITO)", f"{round(float(ito), 2)} 次/年")
 
 tab_edit, tab_chart, tab_log, tab_ai = st.tabs(["📝 计划录入与备注", "📈 供需分析图", "📜 审计日志", "🧠 AI 智能诊断"])
+
+# 显示当前各部门期初库存设置
+with tab_edit:
+    st.info("💡 **期初库存设置**：请在左侧边栏「各部门期初库存设置」中输入各部门的期初库存数量，然后点击保存按钮生效。")
+    st.write("**当前各部门期初库存设置：**")
+    for dept in DEPTS:
+        st.write(f"- {dept}: {dept_init_inv.get(dept, 0)} PCS")
+    st.write(f"- **总计**: {sum(dept_init_inv.values())} PCS / 总期初库存: {init_inv} PCS")
+    st.markdown("---")
 
 # -------- Tab 1: 计划录入 --------
 with tab_edit:
