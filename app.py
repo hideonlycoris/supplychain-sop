@@ -9,6 +9,7 @@ import hashlib
 import logging
 from datetime import datetime, timedelta
 from supabase import create_client, Client
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 # ============================================================
 # 1. 系统配置与常量
@@ -432,6 +433,32 @@ for row_idx_str, changes in st.session_state[delta_key].items():
         except (ValueError, TypeError, KeyError) as e:
             logger.warning(f"编辑应用异常 row={row_idx_str} col={col}: {e}")
 
+# 处理AgGrid的编辑数据
+if 'edited_df' in locals() and edited_df is not None:
+    for idx, row in edited_df.iterrows():
+        m = row["月份"]
+        for col in edited_df.columns:
+            if col == "月份" or col == "备注":
+                continue
+            if "_" in col:
+                dept = col.split("_")[0]
+                val = row[col]
+
+                # 权限检查
+                if not is_admin and dept != current_user:
+                    continue
+
+                if "_发货" in col and is_admin:
+                    working_db.setdefault("shipments", {}).setdefault(m, {})[dept] = int(val) if val else 0
+                elif "_预测" in col:
+                    working_db.setdefault("dept_plans", {}).setdefault(m, {})[dept] = int(val) if val else 0
+                elif "_实绩" in col:
+                    working_db.setdefault("actual_sales", {}).setdefault(m, {})[dept] = int(val) if val else 0
+
+        # 处理备注
+        if "备注" in edited_df.columns:
+            working_db.setdefault("notes", {})[m] = str(row.get("备注", ""))
+
 working_db["config"].update({
     "price": price, "init_inv": init_inv,
     "target_doh": target_doh, "lt": lt_months, "frozen_months": frozen_m
@@ -660,9 +687,6 @@ tab_edit, tab_chart, tab_log, tab_ai = st.tabs(["📝 计划录入与备注", "�
 
 # -------- Tab 1: 计划录入 --------
 with tab_edit:
-    # 提示用户
-    st.info("💡 提示：表格可以左右滚动，月份列在最左侧。编辑后点击「确认保存并同步」按钮保存。")
-
     edit_data = []
     for i, r in sim_df.iterrows():
         m = r["月份"]
@@ -675,16 +699,42 @@ with tab_edit:
             row[f"{dept}_实绩"] = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
         edit_data.append(row)
 
-    st.data_editor(
-        pd.DataFrame(edit_data),
-        use_container_width=True,
-        hide_index=True,
-        key=editor_key,
-        column_config={
-            "备注": st.column_config.TextColumn("📝 决策备注", width="large"),
-            "月份": st.column_config.TextColumn("月份", width="small")
-        }
+    edit_df = pd.DataFrame(edit_data)
+
+    # 使用AgGrid实现固定首列
+    gb = GridOptionsBuilder.from_dataframe(edit_df)
+    gb.configure_default_column(editable=True, filter=True, sortable=True)
+
+    # 固定月份列
+    gb.configure_column("月份", pinned="left", editable=False, width=100)
+    gb.configure_column("备注", width=200)
+
+    # 配置其他列
+    for col in edit_df.columns:
+        if col not in ["月份", "备注"]:
+            gb.configure_column(col, width=120)
+
+    gb.configure_selection(selection_mode="multiple", use_checkbox=False)
+    gb.configure_grid_options(domLayout="autoHeight")
+
+    grid_options = gb.build()
+
+    grid_response = AgGrid(
+        edit_df,
+        gridOptions=grid_options,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        fit_columns_on_grid_load=False,
+        theme="streamlit",
+        enable_enterprise_modules=True,
+        height=500,
+        reload_data=False,
+        key=editor_key
     )
+
+    # 获取编辑后的数据
+    if grid_response["data"] is not None:
+        edited_df = pd.DataFrame(grid_response["data"])
 
     col_save1, col_save2 = st.columns([1, 4])
     if col_save1.button("💾 确认保存并同步", type="primary"):
