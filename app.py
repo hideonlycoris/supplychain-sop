@@ -536,6 +536,22 @@ for i, d in enumerate(f_dates):
     dept_row = {}
     view_depts = DEPTS if is_admin else [current_user]
 
+    # 自动过滤：只显示有数据的部门
+    if is_admin:
+        active_depts = []
+        for dept in DEPTS:
+            has_data = False
+            for m in [d.strftime('%Y-%m') for d in f_dates]:
+                ship = working_db.get("shipments", {}).get(m, {}).get(dept, 0) if isinstance(working_db.get("shipments", {}).get(m, 0), dict) else 0
+                plan = working_db.get("dept_plans", {}).get(m, {}).get(dept, 0)
+                actual = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
+                if ship > 0 or plan > 0 or actual > 0:
+                    has_data = True
+                    break
+            if has_data:
+                active_depts.append(dept)
+        view_depts = active_depts if active_depts else DEPTS  # 如果都没有数据，显示全部
+
     for dept in view_depts:
         # 该部门的发货数据
         dept_ship = working_db.get("shipments", {}).get(ds, {}).get(dept, 0) if isinstance(working_db.get("shipments", {}).get(ds, 0), dict) else 0
@@ -748,21 +764,25 @@ with tab_chart:
             return 'background-color: #fff3cd'
         return 'background-color: #d4edda'
 
-    styled_df = sim_df.style \
-        .highlight_between(left=-9999, right=-1, subset=['期末在仓'], color='#ffcccc') \
-        .map(color_doh, subset=['DOH'])
+    # 使用AgGrid固定月份列
+    gb_chart = GridOptionsBuilder.from_dataframe(sim_df)
+    gb_chart.configure_default_column(filter=True, sortable=True)
+    gb_chart.configure_column("月份", pinned="left", editable=False, width=100)
+    gb_chart.configure_column("备注", width=200)
+    gb_chart.configure_column("DOH", width=80)
+    gb_chart.configure_grid_options(domLayout="autoHeight")
 
-    st.dataframe(
-        styled_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "月份": st.column_config.TextColumn("月份", width="small"),
-            "DOH": st.column_config.NumberColumn("DOH", format="%.1f", width="small",
-                                                  help="999 = 下月无预测需求，库存充裕"),
-            "全口径库存": st.column_config.NumberColumn("全口径库存", width="medium"),
-            "备注": st.column_config.TextColumn("备注", width="large")
-        }
+    chart_grid_options = gb_chart.build()
+
+    AgGrid(
+        sim_df,
+        gridOptions=chart_grid_options,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        fit_columns_on_grid_load=False,
+        theme="streamlit",
+        enable_enterprise_modules=True,
+        height=500,
+        key="chart_grid"
     )
 
     # 汇总图表
@@ -795,9 +815,17 @@ with tab_chart:
     else:
         view_depts = [current_user]  # 部门用户只能看自己部门
 
-    # 部门选择器
+    # 部门选择器 - 只显示有数据的部门
     if is_admin:
-        selected_dept = st.selectbox("选择部门查看详细数据", DEPTS)
+        # 检测有数据的部门
+        active_depts_for_select = []
+        for dept in DEPTS:
+            dept_total = sim_df[f"{dept}_发货"].sum() + sim_df[f"{dept}_预测"].sum() + sim_df[f"{dept}_实绩"].sum()
+            if dept_total > 0:
+                active_depts_for_select.append(dept)
+        if not active_depts_for_select:
+            active_depts_for_select = DEPTS
+        selected_dept = st.selectbox("选择部门查看详细数据", active_depts_for_select)
     else:
         selected_dept = current_user
         st.info(f"当前查看: {selected_dept}")
