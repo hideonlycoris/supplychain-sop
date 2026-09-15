@@ -738,16 +738,37 @@ with tab_edit:
 
     col_save1, col_save2 = st.columns([1, 4])
     if col_save1.button("💾 确认保存并同步", type="primary"):
+        # 将AgGrid编辑后的数据写回working_db
+        if grid_response["data"] is not None:
+            for _, row in edited_df.iterrows():
+                m = row["月份"]
+                if is_admin:
+                    # 管理员：写入各部门发货数据
+                    for dept in DEPTS:
+                        ship_col = f"{dept}_发货"
+                        if ship_col in row:
+                            val = int(float(row[ship_col])) if pd.notna(row[ship_col]) else 0
+                            working_db.setdefault("shipments", {}).setdefault(m, {})[dept] = val
+                elif current_user in DEPTS:
+                    # 部门用户：只写入自己部门的发货数据
+                    ship_col = f"{current_user}_发货"
+                    if ship_col in row:
+                        val = int(float(row[ship_col])) if pd.notna(row[ship_col]) else 0
+                        working_db.setdefault("shipments", {}).setdefault(m, {})[current_user] = val
+
         full_db[sku_key] = working_db
         save_sku_data(sku_key, working_db, current_user)
         if delta_key in st.session_state:
             del st.session_state[delta_key]
-        st.success("同步成功！数据已保存到云端数据库。")
+        st.success("✅ 同步成功！请切换到「供需分析图」查看更新后的数据。")
         st.rerun()
     if col_save2.button("🚫 放弃当前修改"):
         if delta_key in st.session_state:
             del st.session_state[delta_key]
         st.rerun()
+
+    # 提示信息
+    st.info("💡 **提示**：修改数据后，请先点击「确认保存并同步」，再切换到「供需分析图」查看更新后的数据。")
 
 # -------- Tab 2: 供需分析图 --------
 with tab_chart:
