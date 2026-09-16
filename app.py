@@ -561,19 +561,6 @@ for i, d in enumerate(f_dates):
     dept_row = {}
 
     for dept in view_depts:
-            has_data = False
-            for m in [d.strftime('%Y-%m') for d in f_dates]:
-                ship = working_db.get("shipments", {}).get(m, {}).get(dept, 0) if isinstance(working_db.get("shipments", {}).get(m, 0), dict) else 0
-                plan = working_db.get("dept_plans", {}).get(m, {}).get(dept, 0)
-                actual = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
-                if ship > 0 or plan > 0 or actual > 0:
-                    has_data = True
-                    break
-            if has_data:
-                active_depts.append(dept)
-        view_depts = active_depts if active_depts else DEPTS  # 如果都没有数据，显示全部
-
-    for dept in view_depts:
         # 该部门的发货数据
         dept_ship = working_db.get("shipments", {}).get(ds, {}).get(dept, 0) if isinstance(working_db.get("shipments", {}).get(ds, 0), dict) else 0
         # 该部门的预测数据
