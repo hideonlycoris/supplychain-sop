@@ -524,15 +524,18 @@ dept_arrival_queue = {dept: [0.0] * 36 for dept in DEPTS}
 for i, d in enumerate(f_dates):
     ds = d.strftime('%Y-%m')
 
-    # 汇总数据（用于显示）
-    actual_total = sum(working_db.get("actual_sales", {}).get(ds, {}).values())
-    plan_total = sum(working_db["dept_plans"].get(ds, {}).values())
+    # 汇总数据（只计算有数据的部门）
+    actual_total = sum([working_db.get("actual_sales", {}).get(ds, {}).get(dept, 0) for dept in view_depts])
+    plan_total = sum([working_db["dept_plans"].get(ds, {}).get(dept, 0) for dept in view_depts])
 
     # 计算汇总到货
     if i >= lt_months:
         ship_month = f_dates[i - lt_months].strftime('%Y-%m')
-        ship_data = working_db["shipments"].get(ship_month, 0)
-        arr_total = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
+        ship_data = working_db["shipments"].get(ship_month, {})
+        if isinstance(ship_data, dict):
+            arr_total = sum([ship_data.get(dept, 0) for dept in view_depts])
+        else:
+            arr_total = ship_data
     else:
         arr_total = 0
 
@@ -619,7 +622,7 @@ for i, d in enumerate(f_dates):
         if i + lt_months < 36:
             dept_arrival_queue[dept][i + lt_months] += dept_ship
 
-    # 计算汇总在途（已发货但未到货的数量）
+    # 计算汇总在途（已发货但未到货的数量，只计算有数据的部门）
     in_transit_total = 0
     for j in range(1, lt_months + 1):
         ship_month_idx = i - j
@@ -628,21 +631,27 @@ for i, d in enumerate(f_dates):
                 ship_month_str = f_dates[ship_month_idx].strftime('%Y-%m')
                 ship_data = working_db["shipments"].get(ship_month_str, {})
                 if isinstance(ship_data, dict):
-                    in_transit_total += sum(ship_data.values())
+                    in_transit_total += sum([ship_data.get(dept, 0) for dept in view_depts])
                 else:
                     in_transit_total += ship_data
 
-    # 计算汇总DOH
-    next_dem_total = sum(working_db["dept_plans"].get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).values())
-    curr_inv_total = sum(dept_sim_inv.values())
+    # 计算汇总DOH（只计算有数据的部门）
+    next_dem_total = sum([
+        working_db["dept_plans"].get(f_dates[min(i + 1, 11)].strftime('%Y-%m'), {}).get(dept, 0)
+        for dept in view_depts
+    ])
+    curr_inv_total = sum([dept_sim_inv[dept] for dept in view_depts])
     if next_dem_total > 0:
         doh_total = round(curr_inv_total / (next_dem_total / 30), 1)
     else:
         doh_total = 999.0 if curr_inv_total > 0 else 0.0
 
-    # 兼容新旧格式计算发货总量
-    ship_data = working_db["shipments"].get(ds, 0)
-    ship_total = sum(ship_data.values()) if isinstance(ship_data, dict) else ship_data
+    # 计算发货总量（只计算有数据的部门）
+    ship_data = working_db["shipments"].get(ds, {})
+    if isinstance(ship_data, dict):
+        ship_total = sum([ship_data.get(dept, 0) for dept in view_depts])
+    else:
+        ship_total = ship_data
 
     sim_res.append({
         "月份": ds, "计划预测": int(plan_total), "实际销量": int(actual_total),
