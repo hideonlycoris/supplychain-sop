@@ -521,6 +521,24 @@ if not dept_init_inv:
 dept_sim_inv = {dept: float(dept_init_inv.get(dept, 0)) for dept in DEPTS}
 dept_arrival_queue = {dept: [0.0] * 36 for dept in DEPTS}
 
+# 确定可查看的部门（在模拟循环外计算一次）
+if is_admin:
+    active_depts = []
+    for dept in DEPTS:
+        has_data = False
+        for m in [d.strftime('%Y-%m') for d in f_dates]:
+            ship = working_db.get("shipments", {}).get(m, {}).get(dept, 0) if isinstance(working_db.get("shipments", {}).get(m, 0), dict) else 0
+            plan = working_db.get("dept_plans", {}).get(m, {}).get(dept, 0)
+            actual = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
+            if ship > 0 or plan > 0 or actual > 0:
+                has_data = True
+                break
+        if has_data:
+            active_depts.append(dept)
+    view_depts = active_depts if active_depts else DEPTS
+else:
+    view_depts = [current_user]
+
 for i, d in enumerate(f_dates):
     ds = d.strftime('%Y-%m')
 
@@ -541,12 +559,8 @@ for i, d in enumerate(f_dates):
 
     # 构建各部门数据（根据权限限制）
     dept_row = {}
-    view_depts = DEPTS if is_admin else [current_user]
 
-    # 自动过滤：只显示有数据的部门
-    if is_admin:
-        active_depts = []
-        for dept in DEPTS:
+    for dept in view_depts:
             has_data = False
             for m in [d.strftime('%Y-%m') for d in f_dates]:
                 ship = working_db.get("shipments", {}).get(m, {}).get(dept, 0) if isinstance(working_db.get("shipments", {}).get(m, 0), dict) else 0
