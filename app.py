@@ -692,9 +692,8 @@ with tab_edit:
     for i, r in sim_df.iterrows():
         m = r["月份"]
         row = {"月份": m, "备注": r["备注"]}
-        target_depts = DEPTS if is_admin else [current_user]
-        # 发货数据按部门分开
-        for dept in target_depts:
+        # 只显示有数据的部门
+        for dept in view_depts:
             row[f"{dept}_发货"] = working_db.get("shipments", {}).get(m, {}).get(dept, 0)
             row[f"{dept}_预测"] = working_db.get("dept_plans", {}).get(m, {}).get(dept, 0)
             row[f"{dept}_实绩"] = working_db.get("actual_sales", {}).get(m, {}).get(dept, 0)
@@ -702,7 +701,7 @@ with tab_edit:
 
     edit_df = pd.DataFrame(edit_data)
 
-    # 使用AgGrid实现固定首列，自适应列宽
+    # 使用AgGrid实现固定首列
     gb = GridOptionsBuilder.from_dataframe(edit_df)
     gb.configure_default_column(editable=True, filter=True, sortable=True, resizable=True)
 
@@ -711,7 +710,7 @@ with tab_edit:
     gb.configure_column("备注", width=200)
 
     gb.configure_selection(selection_mode="multiple", use_checkbox=False)
-    gb.configure_grid_options(domLayout="autoHeight", autoSizeStrategy={"type": "fitGridColumnContents"})
+    gb.configure_grid_options(domLayout="autoHeight")
 
     grid_options = gb.build()
 
@@ -720,9 +719,8 @@ with tab_edit:
         gridOptions=grid_options,
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
         update_mode=GridUpdateMode.VALUE_CHANGED,
-        fit_columns_on_grid_load=False,
+        fit_columns_on_grid_load=True,
         theme="streamlit",
-        enable_enterprise_modules=True,
         height=500,
         reload_data=False,
         key=editor_key
@@ -773,13 +771,13 @@ with tab_chart:
             return 'background-color: #fff3cd'
         return 'background-color: #d4edda'
 
-    # 使用AgGrid固定月份列，自适应列宽
+    # 使用AgGrid固定月份列
     gb_chart = GridOptionsBuilder.from_dataframe(sim_df)
     gb_chart.configure_default_column(filter=True, sortable=True, resizable=True)
     gb_chart.configure_column("月份", pinned="left", editable=False, width=90)
     gb_chart.configure_column("备注", width=250)
     gb_chart.configure_column("DOH", width=70)
-    gb_chart.configure_grid_options(domLayout="autoHeight", autoSizeStrategy={"type": "fitGridColumnContents"})
+    gb_chart.configure_grid_options(domLayout="autoHeight")
 
     chart_grid_options = gb_chart.build()
 
@@ -787,9 +785,8 @@ with tab_chart:
         sim_df,
         gridOptions=chart_grid_options,
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-        fit_columns_on_grid_load=False,
+        fit_columns_on_grid_load=True,
         theme="streamlit",
-        enable_enterprise_modules=True,
         height=500,
         key="chart_grid"
     )
