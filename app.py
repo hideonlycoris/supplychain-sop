@@ -1022,34 +1022,47 @@ with tab_ai:
                     diag = ""
                     if model_name == "mimo-v2.5":
                         import requests
-                        response = requests.post(
-                            "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {MIMO_API_KEY}",
-                                "Content-Type": "application/json"
-                            },
-                            json={
-                                "model": "mimo-v2.5",
-                                "messages": [
-                                    {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": user_prompt}
-                                ],
-                                "temperature": 0.7,
-                                "max_tokens": 4000
-                            },
-                            timeout=180
-                        )
-                        if response.status_code != 200:
-                            diag = f"HTTP {response.status_code}: {response.text[:600]}"
-                        else:
+                        # mimo-v2.5 是推理型模型：思考写在 reasoning_content 里，
+                        # 答案写在 content 里，两者共用 max_tokens。额度不够时
+                        # finish_reason=length 且 content 为空 —— 思考完就没 token 作答了。
+                        # 所以撞上限且正文为空时，翻倍额度重试一次。
+                        for mt in (16000, 32000):
+                            response = requests.post(
+                                "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
+                                headers={
+                                    "Authorization": f"Bearer {MIMO_API_KEY}",
+                                    "Content-Type": "application/json"
+                                },
+                                json={
+                                    "model": "mimo-v2.5",
+                                    "messages": [
+                                        {"role": "system", "content": system_prompt},
+                                        {"role": "user", "content": user_prompt}
+                                    ],
+                                    "temperature": 0.7,
+                                    "max_tokens": mt
+                                },
+                                timeout=300
+                            )
+                            if response.status_code != 200:
+                                diag = f"HTTP {response.status_code}: {response.text[:600]}"
+                                break
+
                             result_json = response.json()
+                            # 完整响应进日志，UI 里只放摘要（usage 才能看出到底烧了多少 token）
+                            logger.info(f"[AI] mimo max_tokens={mt} "
+                                        f"{json.dumps(result_json, ensure_ascii=False, default=str)}")
                             choices = result_json.get("choices") or []
-                            if choices:
-                                raw_body = ((choices[0].get("message") or {}).get("content") or "").strip()
-                                diag = (f"finish_reason={choices[0].get('finish_reason')}, "
-                                        f"model={result_json.get('model')}")
-                            if not raw_body:
-                                diag += " | 响应: " + json.dumps(result_json, ensure_ascii=False, default=str)[:600]
+                            msg = (choices[0].get("message") or {}) if choices else {}
+                            raw_body = (msg.get("content") or "").strip()
+                            finish = choices[0].get("finish_reason") if choices else None
+                            diag = (f"finish_reason={finish}, max_tokens={mt}, "
+                                    f"usage={json.dumps(result_json.get('usage'), ensure_ascii=False, default=str)}")
+                            if not raw_body and msg.get("reasoning_content"):
+                                diag += (f" | 只输出了思考过程({len(msg['reasoning_content'])}字符)就撞上 token 上限，"
+                                         f"未产出正文")
+                            if raw_body:
+                                break
                     else:
                         # 使用Gemini
                         import google.generativeai as genai
