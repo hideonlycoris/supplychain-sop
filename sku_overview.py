@@ -233,7 +233,7 @@ def update_sku_target_doh(supabase_client, full_db: dict, sku_name: str, new_tar
             st.error(f"保存失败: {e}")
 
 
-def run_ai_diagnosis(sku_name: str, sku_data: dict, api_key: str, model_name: str = "mimo-v2.5") -> dict:
+def run_ai_diagnosis(sku_name: str, sku_data: dict, api_key: str, model_name: str = "mimo-v2.6-flash") -> dict:
     """对单个SKU运行AI诊断 - 使用MiMo v2.5模型"""
     import requests
 

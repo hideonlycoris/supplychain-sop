@@ -994,7 +994,7 @@ with tab_ai:
 
     with col_ai_left:
         st.info(f"✅ 内置配置。当前分析 SKU: **{target_sku}**")
-        model_name = st.selectbox("选择模型", ["mimo-v2.5", "gemini-3-flash-preview", "gemini-3.1-pro-preview"])
+        model_name = st.selectbox("选择模型", ["mimo-v2.6-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview"])
 
         if st.button("✨ 召唤专家诊断", type="primary"):
             # 用 st.status 而不是 st.spinner：推理型模型单次要跑几分钟，
@@ -1022,9 +1022,9 @@ with tab_ai:
                     # 把上一份正常报告整条覆盖掉，且页面上只显示一行时间戳。
                     raw_body = ""
                     diag = ""
-                    if model_name == "mimo-v2.5":
+                    if model_name.startswith("mimo"):
                         import requests
-                        # mimo-v2.5 是推理型模型：思考写在 reasoning_content 里，
+                        # mimo 是推理型模型：思考写在 reasoning_content 里，
                         # 答案写在 content 里，两者共用 max_tokens。额度不够时
                         # finish_reason=length 且 content 为空 —— 思考完就没 token 作答了。
                         # 所以撞上限且正文为空时，翻倍额度重试一次。
@@ -1040,7 +1040,8 @@ with tab_ai:
                                     "Content-Type": "application/json"
                                 },
                                 json={
-                                    "model": "mimo-v2.5",
+                                    # 直接用下拉框选中的名字，避免选项改了这里还发旧的
+                                    "model": model_name,
                                     "messages": [
                                         {"role": "system", "content": system_prompt},
                                         {"role": "user", "content": user_prompt}
