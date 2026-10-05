@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from supabase import create_client, Client
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from db_utils import describe_db_error, db_retry, supabase_host
+from grid_writeback import apply_grid_edits
 
 # ============================================================
 # 1. 系统配置与常量
@@ -413,31 +414,9 @@ if is_admin:
             st.sidebar.success("✅ 已保存到数据库！")
             st.rerun()
 
-# 处理AgGrid的编辑数据
-if 'edited_df' in locals() and edited_df is not None:
-    for idx, row in edited_df.iterrows():
-        m = row["月份"]
-        for col in edited_df.columns:
-            if col == "月份" or col == "备注":
-                continue
-            if "_" in col:
-                dept = col.split("_")[0]
-                val = row[col]
-
-                # 权限检查
-                if not is_admin and dept != current_user:
-                    continue
-
-                if "_发货" in col and is_admin:
-                    working_db.setdefault("shipments", {}).setdefault(m, {})[dept] = int(val) if val else 0
-                elif "_预测" in col:
-                    working_db.setdefault("dept_plans", {}).setdefault(m, {})[dept] = int(val) if val else 0
-                elif "_实绩" in col:
-                    working_db.setdefault("actual_sales", {}).setdefault(m, {})[dept] = int(val) if val else 0
-
-        # 处理备注
-        if "备注" in edited_df.columns:
-            working_db.setdefault("notes", {})[m] = str(row.get("备注", ""))
+# 注意：AgGrid 的编辑写回只在下方「确认保存并同步」按钮里做。
+# 这里不能提前处理 edited_df——它要到 tab 渲染之后才有值，
+# 且提前写入会把用户点了「放弃当前修改」的内容又灌回 working_db。
 
 working_db["config"].update({
     "price": price, "init_inv": init_inv,
@@ -742,28 +721,15 @@ with tab_edit:
     )
 
     # 获取编辑后的数据
+    edited_df = None
     if grid_response["data"] is not None:
         edited_df = pd.DataFrame(grid_response["data"])
 
     col_save1, col_save2 = st.columns([1, 4])
     if col_save1.button("💾 确认保存并同步", type="primary"):
-        # 将AgGrid编辑后的数据写回working_db
-        if grid_response["data"] is not None:
-            for _, row in edited_df.iterrows():
-                m = row["月份"]
-                if is_admin:
-                    # 管理员：写入各部门发货数据
-                    for dept in DEPTS:
-                        ship_col = f"{dept}_发货"
-                        if ship_col in row:
-                            val = int(float(row[ship_col])) if pd.notna(row[ship_col]) else 0
-                            working_db.setdefault("shipments", {}).setdefault(m, {})[dept] = val
-                elif current_user in DEPTS:
-                    # 部门用户：只写入自己部门的发货数据
-                    ship_col = f"{current_user}_发货"
-                    if ship_col in row:
-                        val = int(float(row[ship_col])) if pd.notna(row[ship_col]) else 0
-                        working_db.setdefault("shipments", {}).setdefault(m, {})[current_user] = val
+        # 发货/预测/实绩/备注 四类都必须写：只写发货会让「实绩」等改动静默丢失，
+        # 供需分析图读的是 actual_sales / dept_plans，看不到就是这里没落库
+        apply_grid_edits(working_db, edited_df, is_admin, current_user)
 
         full_db[sku_key] = working_db
         if save_sku_data(sku_key, working_db, current_user):
