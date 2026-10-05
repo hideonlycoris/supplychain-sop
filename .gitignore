@@ -12,6 +12,12 @@ venv/
 # Streamlit secrets（部署时通过 Cloud UI 配置）
 .streamlit/secrets.toml
 
+# 本地数据库（真实业务数据，仓库是公开的，绝不能提交）
+sop.db
+*.db
+*.sqlite
+*.sqlite3
+
 # 旧版数据文件（已迁移到 Supabase）
 sop_v11_db.json
 sop_v6_pro_db.json
