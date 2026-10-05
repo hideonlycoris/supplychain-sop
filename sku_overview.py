@@ -7,6 +7,8 @@ import json
 from datetime import datetime, timedelta
 import google.generativeai as genai
 
+from db_utils import describe_db_error, db_retry
+
 
 def get_risk_color(risk_level: str) -> str:
     """根据风险等级返回颜色"""
@@ -458,18 +460,24 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         st.session_state.show_batch_edit = False
 
     # 重新加载数据，确保风险等级是最新的
+    # 注意：失败时保留 full_db 原内容，否则页面会退化成"暂无数据"
     try:
-        result = supabase_client.table("sku_data").select("*").execute()
-        full_db.clear()
+        result = db_retry(lambda: supabase_client.table("sku_data").select("*").execute())
+        fresh = {}
         for row in result.data:
             data = row["data"]
             # 兼容两种格式：JSON字符串或字典
             if isinstance(data, str):
-                full_db[row["sku_name"]] = json.loads(data)
+                fresh[row["sku_name"]] = json.loads(data)
             else:
-                full_db[row["sku_name"]] = data
+                fresh[row["sku_name"]] = data
+        full_db.clear()
+        full_db.update(fresh)
+        st.session_state.pop('db_error', None)
     except Exception as e:
-        st.warning(f"重新加载数据失败: {e}")
+        msg = describe_db_error(e)
+        st.warning(f"重新加载数据失败\n\n{msg}")
+        st.session_state['db_error'] = msg
 
     # 页面标题
     st.markdown("""
@@ -511,6 +519,8 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         st.info(f"👤 **{current_user}** | {'管理员' if is_admin else '部门用户'}")
     with col2:
         if st.button("🔄 刷新数据", use_container_width=True):
+            # 先丢掉缓存，否则 load_all_sku_data 不会重新拉取
+            st.session_state.pop('full_db', None)
             st.rerun()
     with col3:
         if st.button("➕ 新建SKU", use_container_width=True):
@@ -572,6 +582,9 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
         })
 
     if not overview_data:
+        # 连不上数据库时不该提示"去新建SKU"——那条路同样会失败
+        if st.session_state.get('db_error'):
+            st.stop()
         st.info("📦 暂无SKU数据，请点击「➕ 新建SKU」创建。")
         return
 

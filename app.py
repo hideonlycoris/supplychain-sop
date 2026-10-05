@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from db_utils import describe_db_error, db_retry, supabase_host
 
 # ============================================================
 # 1. 系统配置与常量
@@ -61,8 +62,9 @@ supabase: Client = init_supabase()
 
 def load_all_sku_data():
     """从 Supabase 加载所有 SKU 数据"""
+    st.session_state.pop('db_error', None)
     try:
-        result = supabase.table("sku_data").select("*").execute()
+        result = db_retry(lambda: supabase.table("sku_data").select("*").execute())
         full_db = {}
         for row in result.data:
             data = row["data"]
@@ -73,25 +75,30 @@ def load_all_sku_data():
                 full_db[row["sku_name"]] = data
         return full_db
     except Exception as e:
+        msg = describe_db_error(e)
         logger.error(f"加载数据失败: {e}")
-        st.error(f"数据加载失败: {e}")
+        st.error(msg)
+        st.session_state['db_error'] = msg
         return {}
-
 
 def save_sku_data(sku_name, data, user):
     """保存单个 SKU 数据到 Supabase"""
     try:
-        supabase.table("sku_data").upsert({
+        db_retry(lambda: supabase.table("sku_data").upsert({
             "sku_name": sku_name,
             "data": json.dumps(data, ensure_ascii=False),
             "updated_at": datetime.now().isoformat()
-        }).execute()
+        }).execute())
         write_log(user, sku_name, "执行数据保存")
         if 'full_db' in st.session_state:
             del st.session_state['full_db']
+        return True
     except Exception as e:
         logger.error(f"保存数据失败: {e}")
-        st.error(f"数据保存失败: {e}")
+        # 保存失败必须说清楚，否则用户以为已存到云端
+        st.error(f"**数据未保存（云端写入失败）**\n\n{describe_db_error(e)}")
+        st.session_state['db_error'] = describe_db_error(e)
+        return False
 
 
 def delete_sku_from_db(sku_name, user):
@@ -265,6 +272,11 @@ if st.session_state.page == 'dashboard':
 # ============================================================
 # 7. SKU 详情页面
 # ============================================================
+# 数据库没连上时不要凭空造一个空 SKU 出来
+if st.session_state.get('db_error') and not full_db:
+    st.info("数据库未连接，SKU 详情页不可用。请先用上方「🔄 刷新数据」重试。")
+    st.stop()
+
 # 选择 SKU
 available_skus = sorted(list(full_db.keys()), key=_sort_key) if full_db else ["请先上传或创建SKU"]
 
@@ -296,10 +308,13 @@ if is_admin:
                     "config": {"init_inv": 0, "price": 50, "target_doh": 30, "frozen_months": 2, "lt": 2},
                     "dept_plans": {}, "shipments": {}, "actual_sales": {}, "notes": {}
                 }
-                save_sku_data(new_sku_name, full_db[new_sku_name], current_user)
-                write_log(current_user, new_sku_name, "新建SKU")
-                st.success(f"SKU [{new_sku_name}] 创建成功")
-                st.rerun()
+                if save_sku_data(new_sku_name, full_db[new_sku_name], current_user):
+                    write_log(current_user, new_sku_name, "新建SKU")
+                    st.success(f"SKU [{new_sku_name}] 创建成功")
+                    st.rerun()
+                else:
+                    # 云端没写进去就别留个假的本地条目
+                    del full_db[new_sku_name]
             else:
                 st.warning("该 SKU 已存在")
 
@@ -394,9 +409,9 @@ if is_admin:
         working_db["config"]["dept_init_inv"] = dept_init_inputs
         # 立即保存到数据库
         full_db[sku_key] = working_db
-        save_sku_data(sku_key, working_db, current_user)
-        st.sidebar.success("✅ 已保存到数据库！")
-        st.rerun()
+        if save_sku_data(sku_key, working_db, current_user):
+            st.sidebar.success("✅ 已保存到数据库！")
+            st.rerun()
 
 # 处理AgGrid的编辑数据
 if 'edited_df' in locals() and edited_df is not None:
@@ -500,10 +515,10 @@ if is_admin:
 
         working_db["shipments"] = new_shipments
         full_db[sku_key] = working_db
-        save_sku_data(sku_key, working_db, current_user)
-        write_log(current_user, sku_key, "执行AI自动补货推演")
-        st.success("推演成功并已同步到云端！")
-        st.rerun()
+        if save_sku_data(sku_key, working_db, current_user):
+            write_log(current_user, sku_key, "执行AI自动补货推演")
+            st.success("推演成功并已同步到云端！")
+            st.rerun()
 
 # ============================================================
 # 7. 模拟计算
@@ -751,9 +766,9 @@ with tab_edit:
                         working_db.setdefault("shipments", {}).setdefault(m, {})[current_user] = val
 
         full_db[sku_key] = working_db
-        save_sku_data(sku_key, working_db, current_user)
-        st.success("✅ 同步成功！请切换到「供需分析图」查看更新后的数据。")
-        st.rerun()
+        if save_sku_data(sku_key, working_db, current_user):
+            st.success("✅ 同步成功！请切换到「供需分析图」查看更新后的数据。")
+            st.rerun()
     if col_save2.button("🚫 放弃当前修改"):
         st.rerun()
 
