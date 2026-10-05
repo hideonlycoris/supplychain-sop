@@ -997,7 +997,9 @@ with tab_ai:
         model_name = st.selectbox("选择模型", ["mimo-v2.5", "gemini-3-flash-preview", "gemini-3.1-pro-preview"])
 
         if st.button("✨ 召唤专家诊断", type="primary"):
-            with st.spinner(f"🧠 AI 正在进行 {target_sku} 的深度推理..."):
+            # 用 st.status 而不是 st.spinner：推理型模型单次要跑几分钟，
+            # 中途不更新状态会被当成页面卡死（浏览器 WebSocket 也会看着像超时）
+            with st.status(f"🧠 AI 正在进行 {target_sku} 的深度推理...", expanded=True) as status:
                 try:
                     df_text = sim_df.to_csv(index=False)
                     current_date_str = datetime.now().strftime('%Y年%m月%d日')
@@ -1026,7 +1028,11 @@ with tab_ai:
                         # 答案写在 content 里，两者共用 max_tokens。额度不够时
                         # finish_reason=length 且 content 为空 —— 思考完就没 token 作答了。
                         # 所以撞上限且正文为空时，翻倍额度重试一次。
-                        for mt in (16000, 32000):
+                        for attempt, mt in enumerate((16000, 32000), start=1):
+                            status.update(
+                                label=f"🧠 第 {attempt}/2 次请求 · max_tokens={mt} · "
+                                      f"推理型模型思考较久，最多等 4 分钟，请勿刷新页面…",
+                                state="running", expanded=True)
                             response = requests.post(
                                 "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
                                 headers={
@@ -1042,7 +1048,7 @@ with tab_ai:
                                     "temperature": 0.7,
                                     "max_tokens": mt
                                 },
-                                timeout=300
+                                timeout=240
                             )
                             if response.status_code != 200:
                                 diag = f"HTTP {response.status_code}: {response.text[:600]}"
@@ -1065,6 +1071,8 @@ with tab_ai:
                                 break
                     else:
                         # 使用Gemini
+                        status.update(label=f"🧠 Gemini {model_name} 推理中… 最多等 4 分钟，请勿刷新页面…",
+                                      state="running", expanded=True)
                         import google.generativeai as genai
                         genai.configure(api_key=GEMINI_API_KEY)
                         model = genai.GenerativeModel(model_name)
@@ -1092,9 +1100,11 @@ with tab_ai:
                         report_content = f"--- 分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n\n{raw_body}"
                         save_report(target_sku, report_content)
                         st.session_state['ai_chat_history'] = []
+                        status.update(label="✅ 诊断完成，已保存", state="complete", expanded=False)
                         st.rerun()
                     else:
                         logger.error(f"AI 诊断返回空内容 sku={target_sku} model={model_name} diag={diag}")
+                        status.update(label="❌ 模型返回空内容，原报告已保留", state="error")
                         st.error(
                             f"❌ **模型返回了空内容，已保留原报告（未覆盖）**\n\n"
                             f"- 模型：`{model_name}`\n"
@@ -1103,7 +1113,9 @@ with tab_ai:
                         )
                 except Exception as e:
                     logger.exception(f"AI 诊断调用失败: {e}")
-                    st.error(f"❌ 调用失败: {e}")
+                    status.update(label=f"❌ 调用失败: {e}", state="error")
+                    st.error(f"❌ 调用失败: {e}\n\n"
+                             f"（若为 `ReadTimeout`，说明模型推理超过单次上限，原报告未被覆盖，可稍后重试）")
 
         st.markdown("---")
         st.markdown(f"### 📋 {target_sku} 全局执行任务清单")
