@@ -1015,6 +1015,11 @@ with tab_ai:
                     )
 
                     # 根据模型选择不同的API
+                    # 关键：模型可能 HTTP 200 却返回空正文（思考耗尽 max_tokens、
+                    # 内容被过滤、响应结构不符）。空正文绝不能存 —— 一旦存了就会
+                    # 把上一份正常报告整条覆盖掉，且页面上只显示一行时间戳。
+                    raw_body = ""
+                    diag = ""
                     if model_name == "mimo-v2.5":
                         import requests
                         response = requests.post(
@@ -1030,28 +1035,59 @@ with tab_ai:
                                     {"role": "user", "content": user_prompt}
                                 ],
                                 "temperature": 0.7,
-                                "max_tokens": 2000
+                                "max_tokens": 4000
                             },
-                            timeout=120
+                            timeout=180
                         )
-                        if response.status_code == 200:
-                            result_json = response.json()
-                            report_content = f"--- 分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n\n{result_json['choices'][0]['message']['content']}"
+                        if response.status_code != 200:
+                            diag = f"HTTP {response.status_code}: {response.text[:600]}"
                         else:
-                            st.error(f"❌ API错误: {response.status_code}")
-                            report_content = None
+                            result_json = response.json()
+                            choices = result_json.get("choices") or []
+                            if choices:
+                                raw_body = ((choices[0].get("message") or {}).get("content") or "").strip()
+                                diag = (f"finish_reason={choices[0].get('finish_reason')}, "
+                                        f"model={result_json.get('model')}")
+                            if not raw_body:
+                                diag += " | 响应: " + json.dumps(result_json, ensure_ascii=False, default=str)[:600]
                     else:
                         # 使用Gemini
                         import google.generativeai as genai
                         genai.configure(api_key=GEMINI_API_KEY)
                         model = genai.GenerativeModel(model_name)
                         response = model.generate_content([system_prompt, user_prompt])
-                        report_content = f"--- 分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n\n{response.text}"
+                        try:
+                            raw_body = (response.text or "").strip()
+                        except Exception as te:
+                            diag = f"读取 response.text 失败: {te}"
+                        if not raw_body:
+                            try:
+                                diag += " | candidates=" + json.dumps(
+                                    [{"finish_reason": str(c.finish_reason),
+                                      "text": "".join(getattr(p, "text", "") or ""
+                                                      for p in (c.content.parts if c.content else []))}
+                                     for c in (response.candidates or [])],
+                                    ensure_ascii=False, default=str)[:600]
+                            except Exception:
+                                pass
+                            try:
+                                diag += f" | prompt_feedback={response.prompt_feedback}"
+                            except Exception:
+                                pass
 
-                    if report_content:
+                    if raw_body:
+                        report_content = f"--- 分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n\n{raw_body}"
                         save_report(target_sku, report_content)
                         st.session_state['ai_chat_history'] = []
                         st.rerun()
+                    else:
+                        logger.error(f"AI 诊断返回空内容 sku={target_sku} model={model_name} diag={diag}")
+                        st.error(
+                            f"❌ **模型返回了空内容，已保留原报告（未覆盖）**\n\n"
+                            f"- 模型：`{model_name}`\n"
+                            f"- 诊断：`{diag}`\n\n"
+                            f"可尝试换一个模型重试。"
+                        )
                 except Exception as e:
                     logger.exception(f"AI 诊断调用失败: {e}")
                     st.error(f"❌ 调用失败: {e}")
@@ -1095,7 +1131,14 @@ with tab_ai:
         st.markdown("---")
         st.markdown(f"### 💡 {target_sku} 最新诊断报告")
         if current_report:
-            st.markdown(current_report)
+            # 格式是「--- 分析时间: ... ---\n\n正文」，去掉首行后没内容就是空报告，
+            # 别让用户对着一行时间戳发懵
+            report_body = current_report.split("\n", 1)[1] if "\n" in current_report else ""
+            if not report_body.strip():
+                st.warning("⚠️ 这份报告正文为空（上次模型返回了空内容）。点上方「✨ 召唤专家诊断」重新生成即可。")
+                st.code(current_report, language=None)
+            else:
+                st.markdown(current_report)
             if st.button("🗑️ 清除诊断记录"):
                 delete_report(target_sku)
                 st.success("已清除")
