@@ -9,6 +9,8 @@
 """
 import pandas as pd
 
+from permissions import can_write_cell
+
 # 列后缀 -> working_db 中的存储位置
 COL_BUCKETS = {"发货": "shipments", "预测": "dept_plans", "实绩": "actual_sales"}
 
@@ -20,16 +22,21 @@ def _to_int(raw):
         return 0
 
 
-def apply_grid_edits(working_db: dict, edited_df, is_admin: bool, current_user: str) -> int:
+def apply_grid_edits(working_db: dict, edited_df, is_admin: bool, current_user: str,
+                     sku_name: str = None, owned_skus=None) -> int:
     """把 AgGrid 返回的编辑结果写进 working_db，返回被写入的单元格数。
 
-    权限规则：
+    权限规则（详见 permissions.can_write_cell）：
       - 发货(shipments)   仅管理员
-      - 预测/实绩          管理员或本部门
+      - 预测/实绩          管理员或本部门；若当前账号是这个 SKU 的项目负责人，
+                           则本项目内所有部门的预测/实绩都能改
       - 备注(notes)        按月共享，所有角色可写（值未变时等同于原样写回）
     """
     if edited_df is None or len(edited_df) == 0:
         return 0
+
+    owned = set(owned_skus or ())
+    is_owner = bool(sku_name) and sku_name in owned
 
     written = 0
     for _, row in edited_df.iterrows():
@@ -41,10 +48,8 @@ def apply_grid_edits(working_db: dict, edited_df, is_admin: bool, current_user: 
             bucket = COL_BUCKETS.get(kind)
             if bucket is None:
                 continue
-            # 权限：发货仅管理员可改；预测/实绩 允许管理员或本部门
-            if kind == "发货" and not is_admin:
-                continue
-            if not is_admin and dept != current_user:
+            if not can_write_cell(is_admin=is_admin, current_user=current_user,
+                                  dept=dept, kind=kind, is_owner=is_owner):
                 continue
             working_db.setdefault(bucket, {}).setdefault(m, {})[dept] = _to_int(row[col])
             written += 1

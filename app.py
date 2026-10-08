@@ -12,6 +12,10 @@ from supabase import create_client, Client
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from db_utils import describe_db_error, db_retry, supabase_host
 from grid_writeback import apply_grid_edits
+from permissions import (account_label, account_scope_user, dept_visible_skus,
+                         restrict_visible_skus)
+from user_store import (authenticate as auth_personal, delete_user,
+                        list_personal_users, setup_sql, table_issue, upsert_user)
 
 # ============================================================
 # 1. 系统配置与常量
@@ -219,13 +223,44 @@ def load_operation_logs():
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
+
+def load_accounts():
+    """登录下拉框的账号：硬编码的老账号 + Supabase 里的个人账号。
+
+    表没建/连不上时照常返回 7 个老账号，不能把登录页卡死。
+    """
+    legacy = list(USER_CREDENTIALS.keys())
+    personal = [a["username"] for a in list_personal_users(supabase)]
+    return legacy + [u for u in personal if u not in legacy]
+
+
+def resolve_account(username):
+    """登录后每次 rerun 重建账号画像 —— admin 改了负责项目要立刻生效。"""
+    if username in USER_CREDENTIALS:
+        return {
+            "username": username,
+            "kind": "legacy",
+            "department": username if username in DEPTS else None,
+            "owned_skus": [],
+            "is_admin": username == "admin",
+        }
+    for acc in list_personal_users(supabase):
+        if acc["username"] == username:
+            return acc
+    return None  # 账号被 admin 删掉了
+
+
 if not st.session_state.logged_in:
     st.title("🔐 S&OP 决策系统 V12")
+    accounts = load_accounts()
     with st.form("login"):
-        u = st.selectbox("部门选择", ["请选择"] + list(USER_CREDENTIALS.keys()))
+        u = st.selectbox("账号选择", ["请选择"] + accounts)
         p = st.text_input("登录密码", type="password")
         if st.form_submit_button("登录系统"):
-            if USER_CREDENTIALS.get(u) == _hash_pw(p):
+            ok = USER_CREDENTIALS.get(u) == _hash_pw(p)
+            if not ok and u and u not in USER_CREDENTIALS:
+                ok = auth_personal(supabase, u, p) is not None
+            if ok:
                 st.session_state.logged_in = True
                 st.session_state.user = u
                 st.rerun()
@@ -234,7 +269,17 @@ if not st.session_state.logged_in:
     st.stop()
 
 current_user = st.session_state.user
-is_admin = (current_user == "admin")
+account = resolve_account(current_user)
+if account is None:
+    # 账号被删 / 表被清：退回登录页，不要带着一个幽灵身份继续跑
+    st.session_state.logged_in = False
+    st.session_state.pop('user', None)
+    st.error(f"账号「{current_user}」已不存在，请重新登录。")
+    st.stop()
+
+is_admin = account["is_admin"]
+# 看数/列范围用的部门：admin 和纯项目负责人都是 None（= 全部门）
+my_dept, scope_all_depts = account_scope_user(account)
 
 # ============================================================
 # 4. 数据加载与侧边栏
@@ -267,7 +312,8 @@ if st.sidebar.button("🏠 首页仪表板", use_container_width=True):
 # ============================================================
 if st.session_state.page == 'dashboard':
     from sku_overview import render_dashboard
-    render_dashboard(full_db, supabase, MIMO_API_KEY, current_user, is_admin)
+    render_dashboard(full_db, supabase, MIMO_API_KEY, current_user, is_admin, account,
+                     scope_all_depts)
     st.stop()  # 停止后续渲染，避免显示SKU详情
 
 # ============================================================
@@ -278,8 +324,18 @@ if st.session_state.get('db_error') and not full_db:
     st.info("数据库未连接，SKU 详情页不可用。请先用上方「🔄 刷新数据」重试。")
     st.stop()
 
-# 选择 SKU
-available_skus = sorted(list(full_db.keys()), key=_sort_key) if full_db else ["请先上传或创建SKU"]
+# 选择 SKU —— 个人账号只能看见自己负责的项目（+ 本部门，若挂了部门）
+available_skus = sorted(list(full_db.keys()), key=_sort_key) if full_db else []
+if account["kind"] == "personal" and available_skus:
+    dept_rule = dept_visible_skus(full_db, my_dept) if my_dept else set()
+    allowed = restrict_visible_skus(available_skus, account, dept_rule)
+    available_skus = sorted(list(allowed), key=_sort_key)
+
+if not available_skus:
+    if account["kind"] == "personal":
+        st.sidebar.warning("🔒 你目前没有任何可见项目，请联系管理员分配。")
+        st.stop()
+    available_skus = ["请先上传或创建SKU"]
 
 # 如果从仪表板跳转过来，使用 selected_sku
 if 'selected_sku' in st.session_state and st.session_state.selected_sku in available_skus:
@@ -289,6 +345,16 @@ else:
 
 target_sku = st.sidebar.selectbox("🎯 选择 SKU", available_skus, index=default_sku_index)
 sku_key = str(target_sku)
+
+# 当前账号是不是这个项目的负责人 —— 决定列可见范围与写权限
+is_owner_here = sku_key in set(account.get("owned_skus") or [])
+# 看全部门列：管理员 / 本项目负责人 / 没挂部门的纯项目负责人
+see_all_depts = is_admin or is_owner_here or not my_dept
+# 写权限比较用的「部门身份」：个人账号挂了部门就比部门名（张三→五部），否则比用户名
+write_identity = my_dept or current_user
+if is_owner_here:
+    st.sidebar.info("⭐ 你是该项目的项目负责人（发货列只读）")
+st.sidebar.caption(f"身份：{account_label(account)}")
 
 # 清除 selected_sku，避免影响下次选择
 if 'selected_sku' in st.session_state:
@@ -341,6 +407,74 @@ if is_admin:
                 if c2.button("❌ 取消"):
                     st.session_state[confirm_key] = False
                     st.session_state["del_target"] = None
+                    st.rerun()
+
+# Admin 人员与项目负责人管理
+if is_admin:
+    with st.sidebar.expander("👥 人员与项目负责人"):
+        issue = table_issue()
+        if issue:
+            st.warning(issue)
+            st.caption("复制下面这段到 Supabase → SQL Editor → Run，然后点首页的「🔄 刷新数据」")
+            # 注意：Streamlit 不允许 expander 套 expander，所以这里直接 st.code（自带复制按钮）
+            st.code(setup_sql(), language="sql")
+
+        personal = list_personal_users(supabase)
+        # 只允许分配到真实存在的 SKU（available_skus 对 admin 就是全量）
+        all_skus = [s for s in available_skus if s in full_db]
+
+        if personal:
+            st.caption("现有个人账号")
+            for a in personal:
+                st.markdown(f"`{a['username']}` · {a['department'] or '纯项目负责人'}")
+                if a["owned_skus"]:
+                    st.caption("　负责：" + "、".join(a["owned_skus"]))
+        else:
+            st.caption("暂无个人账号")
+
+        with st.form("add_personal_account", clear_on_submit=True):
+            nu = st.text_input("新账号用户名")
+            npw = st.text_input("新账号密码（至少 6 位）", type="password")
+            _dept_opts = ["（不挂部门）"] + DEPTS
+            nd = st.selectbox("部门", _dept_opts, key="new_dept",
+                              help="留空=纯项目负责人，只能看见自己负责的项目；选了部门则两者取并集")
+            nos = st.multiselect("负责项目（SKU）", all_skus, key="new_owned")
+            if st.form_submit_button("➕ 创建账号", type="primary"):
+                try:
+                    upsert_user(supabase, username=nu, password=npw,
+                                department=None if nd == "（不挂部门）" else nd,
+                                owned_skus=nos)
+                    write_log(current_user, nu, "新增个人账号")
+                    st.success(f"已创建 {nu}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+        if personal:
+            names = [a["username"] for a in personal]
+            target = st.selectbox("编辑 / 删除账号", ["--"] + names, key="edit_target")
+            cur = next((a for a in personal if a["username"] == target), None)
+            if cur:
+                _opts = ["（不挂部门）"] + DEPTS
+                _idx = _opts.index(cur["department"]) if cur["department"] in _opts else 0
+                ed_dept = st.selectbox("部门", _opts, index=_idx, key="ed_dept")
+                _owned = [s for s in cur["owned_skus"] if s in all_skus]
+                ed_owned = st.multiselect("负责项目", all_skus, default=_owned, key="ed_owned")
+                ed_pw = st.text_input("重置密码（留空=不改）", type="password", key="ed_pw")
+                c1, c2 = st.columns(2)
+                if c1.button("💾 保存", key="ed_save"):
+                    try:
+                        upsert_user(supabase, username=cur["username"], password=ed_pw,
+                                    department=None if ed_dept == "（不挂部门）" else ed_dept,
+                                    owned_skus=ed_owned)
+                        write_log(current_user, cur["username"], "修改个人账号权限")
+                        st.success("已保存，该账号下次刷新即生效")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
+                if c2.button("🗑️ 删除", key="ed_del"):
+                    if delete_user(supabase, cur["username"]):
+                        write_log(current_user, cur["username"], "删除个人账号")
                     st.rerun()
 
 # 初始化 SKU 数据结构
@@ -516,7 +650,7 @@ dept_sim_inv = {dept: float(dept_init_inv.get(dept, 0)) for dept in DEPTS}
 dept_arrival_queue = {dept: [0.0] * 36 for dept in DEPTS}
 
 # 确定可查看的部门（在模拟循环外计算一次）
-if is_admin:
+if see_all_depts:
     active_depts = []
     for dept in DEPTS:
         has_data = False
@@ -531,7 +665,7 @@ if is_admin:
             active_depts.append(dept)
     view_depts = active_depts if active_depts else DEPTS
 else:
-    view_depts = [current_user]
+    view_depts = [my_dept]
 
 for i, d in enumerate(f_dates):
     ds = d.strftime('%Y-%m')
@@ -665,7 +799,7 @@ sim_df = pd.DataFrame(sim_res)
 st.title(f"🚢 {target_sku} 2026 滚动决策台")
 
 st_col1, st_col2, st_col3 = st.columns([2, 1, 1])
-st_col1.markdown(f"**当前用户:** {current_user} {'`(管理员)`' if is_admin else ''}")
+st_col1.markdown(f"**当前用户:** {current_user} `{account_label(account)}`")
 st_col2.success("✅ 数据已同步")
 st_col3.markdown(f"**SKU:** `{target_sku}`")
 
@@ -703,6 +837,13 @@ with tab_edit:
     gb.configure_column("月份", pinned="left", editable=False, width=90)
     gb.configure_column("备注", width=200)
 
+    # 发货列只有管理员能改。以前这里让所有人随便打字、保存时再静默丢掉，
+    # 用户以为存上了 —— 直接在 UI 上锁死，和 apply_grid_edits 的规则对齐。
+    if not is_admin:
+        for _dept in view_depts:
+            gb.configure_column(f"{_dept}_发货", editable=False,
+                                cellStyle={"backgroundColor": "#f2f2f2", "color": "#999"})
+
     gb.configure_selection(selection_mode="multiple", use_checkbox=False)
     gb.configure_grid_options(domLayout="autoHeight")
 
@@ -729,7 +870,8 @@ with tab_edit:
     if col_save1.button("💾 确认保存并同步", type="primary"):
         # 发货/预测/实绩/备注 四类都必须写：只写发货会让「实绩」等改动静默丢失，
         # 供需分析图读的是 actual_sales / dept_plans，看不到就是这里没落库
-        apply_grid_edits(working_db, edited_df, is_admin, current_user)
+        apply_grid_edits(working_db, edited_df, is_admin, write_identity,
+                         sku_name=sku_key, owned_skus=account.get("owned_skus"))
 
         full_db[sku_key] = working_db
         if save_sku_data(sku_key, working_db, current_user):
@@ -797,13 +939,13 @@ with tab_chart:
     st.markdown("### 📊 各部门供需分析")
 
     # 确定可查看的部门
-    if is_admin:
-        view_depts = DEPTS  # 管理员可看所有部门
+    if see_all_depts:
+        view_depts = DEPTS  # 管理员 / 项目负责人可看所有部门
     else:
-        view_depts = [current_user]  # 部门用户只能看自己部门
+        view_depts = [my_dept]  # 部门用户只能看自己部门
 
     # 部门选择器 - 只显示sim_df中存在的部门
-    if is_admin:
+    if see_all_depts:
         # 检测sim_df中存在且有数据的部门
         active_depts_for_select = []
         for dept in DEPTS:
@@ -818,7 +960,7 @@ with tab_chart:
             active_depts_for_select = list(dict.fromkeys(active_depts_for_select))  # 去重保持顺序
         selected_dept = st.selectbox("选择部门查看详细数据", active_depts_for_select) if active_depts_for_select else None
     else:
-        selected_dept = current_user
+        selected_dept = my_dept
         st.info(f"当前查看: {selected_dept}")
 
     # 绘制所选部门的图表

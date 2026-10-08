@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 import google.generativeai as genai
 
 from db_utils import describe_db_error, db_retry
+from permissions import (account_label, account_scope_user, dept_visible_skus,
+                         restrict_visible_skus)
 
 
 def get_risk_color(risk_level: str) -> str:
@@ -453,8 +455,24 @@ def run_batch_diagnosis(full_db: dict, supabase_client, api_key: str, current_us
     st.rerun()
 
 
-def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user: str, is_admin: bool):
-    """渲染独立的仪表板首页"""
+def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user: str,
+                     is_admin: bool, account: dict = None, scope_all_depts: bool = None):
+    """渲染独立的仪表板首页
+
+    account = 项目负责人画像（见 permissions.py）；不传时按老的部门账号处理，
+    所以旧调用方式行为完全不变。
+    """
+    if account is None:
+        account = {
+            "username": current_user,
+            "kind": "legacy",
+            "department": None if is_admin else current_user,
+            "owned_skus": [],
+            "is_admin": is_admin,
+        }
+    if scope_all_depts is None:
+        _, scope_all_depts = account_scope_user(account)
+
     # 初始化session_state
     if 'show_batch_edit' not in st.session_state:
         st.session_state.show_batch_edit = False
@@ -516,7 +534,7 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     # 操作栏
     col1, col2, col3 = st.columns([3, 2, 1])
     with col1:
-        st.info(f"👤 **{current_user}** | {'管理员' if is_admin else '部门用户'}")
+        st.info(f"👤 **{current_user}** | {account_label(account)}")
     with col2:
         if st.button("🔄 刷新数据", use_container_width=True):
             # 先丢掉缓存，否则 load_all_sku_data 不会重新拉取
@@ -533,33 +551,30 @@ def render_dashboard(full_db: dict, supabase_client, api_key: str, current_user:
     diagnosis_cache = load_diagnosis_cache(supabase_client)
 
     # 根据权限过滤SKU数据
-    filtered_db = {}
+    #   管理员 → 全部
+    #   部门账号 → 本部门有 预测/实绩 数据的 SKU（沿用原有口径）
+    #   个人账号 → 上面的结果 ∪ 自己负责的项目（restrict_visible_skus 内部只对个人账号生效）
     if is_admin:
-        # 管理员可以看到所有SKU
-        filtered_db = full_db
+        allowed = set(full_db)
     else:
-        # 部门用户只能看到有该部门数据的SKU
-        for sku_name, sku_data in full_db.items():
-            dept_plans = sku_data.get("dept_plans", {})
-            actual_sales = sku_data.get("actual_sales", {})
-            # 检查该SKU是否有当前部门的计划或实绩数据
-            has_dept_data = False
-            for month_data in dept_plans.values():
-                if current_user in month_data and month_data[current_user] > 0:
-                    has_dept_data = True
-                    break
-            if not has_dept_data:
-                for month_data in actual_sales.values():
-                    if current_user in month_data and month_data[current_user] > 0:
-                        has_dept_data = True
-                        break
-            if has_dept_data:
-                filtered_db[sku_name] = sku_data
+        rule_dept = (account.get("department") or
+                     (current_user if account.get("kind") != "personal" else None))
+        dept_rule = dept_visible_skus(full_db, rule_dept)
+        if account.get("kind") == "personal":
+            allowed = restrict_visible_skus(full_db.keys(), account, dept_rule)
+        else:
+            allowed = dept_rule
+    filtered_db = {name: data for name, data in full_db.items() if name in allowed}
 
     # 构建总表数据
+    # metrics 里 current_user 是当「部门键」用的，个人账号挂了部门要传部门名，
+    # 不能传登录名（张三 → 五部），否则取数全是 0
+    scope_user = account.get("department") or current_user
     overview_data = []
     for sku_name, sku_data in filtered_db.items():
-        metrics = calculate_sku_metrics(sku_name, sku_data, current_user, is_admin)
+        # 纯项目负责人在自己项目里要看全部门的数，metrics 按全口径汇总
+        metrics = calculate_sku_metrics(sku_name, sku_data, scope_user,
+                                        is_admin or scope_all_depts)
 
         # 获取该SKU的AI分析摘要
         diagnosis = diagnosis_cache.get(sku_name, {})
